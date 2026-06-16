@@ -28,19 +28,15 @@ cd ~/EUNICE_MASTER
 ```
 This installs system packages, Ollama, Python dependencies, and pulls the AI models.
 
-### 2. Start the Brain (Ollama)
-```bash
-ollama serve
-```
-
-### 3. Start EUNICE Server
+### 2. Start EUNICE Server
 ```bash
 cd ~/EUNICE_MASTER
 ./eunice.sh launch
 ```
-If `venv/` is missing, `launch` will automatically run `setup` first.
+This automatically starts Ollama if it isn't already running, then launches the FastAPI server.
+If `venv/` is missing, `launch` will run `setup` first.
 
-### 4. Open the Client
+### 3. Open the Client
 On your phone or laptop browser:
 ```
 http://<this-machine-ip>:8000
@@ -83,8 +79,18 @@ Legacy scripts (`launch.sh`, `setup.sh`, `test_eunice_full.sh`, `backup.sh`) sti
 ```
 Backups save to `~/eunice_backups/`.
 
+## Logs
+Runtime logs are written to `data/eunice.log` and printed to stdout:
+```bash
+tail -f data/eunice.log
+```
+Useful grep patterns:
+- `[REQUEST]` / `[RESPONSE]` — all HTTP traffic
+- `[CHAT]` — chat messages, intents, tool calls
+- `[INFERENCE]` / `[OLLAMA]` — model requests and responses
+- `[SERVER ERROR]` / `[STREAM ERROR]` — errors
+
 ## Troubleshooting
-- **"Ollama is not running"**: Start Terminal 1 first with `ollama serve`.
 - **Slow replies**: Switch to `llama3.2:3b` in `config.py`.
 - **Phone cannot connect**: Ensure both devices are on the same Wi-Fi. Check firewall with `sudo ufw allow 8000`.
 - **"Wrong API key"**: Set the same key in `config.py` (or `EUNICE_API_KEY` env var) and in the client Settings.

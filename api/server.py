@@ -5,6 +5,7 @@ import os
 import json
 import re
 import asyncio
+import logging
 import httpx
 from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Depends
@@ -30,11 +31,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start = asyncio.get_event_loop().time()
+    method = request.method
+    path = request.url.path
+    user_agent = request.headers.get("user-agent", "-")
+    logger.info(f"[REQUEST] {method} {path} UA={user_agent}")
+    try:
+        response = await call_next(request)
+        elapsed = (asyncio.get_event_loop().time() - start) * 1000
+        logger.info(f"[RESPONSE] {method} {path} status={response.status_code} time={elapsed:.1f}ms")
+        return response
+    except Exception as e:
+        elapsed = (asyncio.get_event_loop().time() - start) * 1000
+        logger.exception(f"[RESPONSE ERROR] {method} {path} time={elapsed:.1f}ms error={e}")
+        raise
+
 memory = MemoryManager()
 tools = ToolRouter()
 trails = TrailManager()
 daemon = BackgroundDaemon(check_interval=900)
 fact_extractor = FactExtractor(memory)
+logger = logging.getLogger("eunice.api")
 
 # Start background daemon on startup
 @app.on_event("startup")
@@ -464,7 +483,7 @@ async def chat(request: Request, background_tasks: BackgroundTasks, token: str =
     except Exception as e:
         import traceback
         error_detail = traceback.format_exc()
-        print(f"[SERVER ERROR] {error_detail}")
+        logger.exception(f"[SERVER ERROR] user={user_id} session={session} {error_detail}")
         return {"reply": f"[ERROR: {type(e).__name__}: {str(e)}]"}
 
 
@@ -477,7 +496,10 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
     user_id = body.get("device_id") or body.get("user_id") or request.headers.get("X-EUNICE-Device-ID") or "ronny"
     user_id = user_id.strip()
 
+    logger.info(f"[CHAT] user={user_id} session={session} msg={user_msg!r}")
+
     if not user_msg:
+        logger.warning("[CHAT] Empty message received")
         return StreamingResponse(
             iter([f'data: {json.dumps({"error": "No message received"})}\n\n']),
             media_type="text/event-stream"
@@ -488,7 +510,9 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
 
     # Onboarding: short-circuit if not complete
     if not memory.is_onboarded(user_id):
+        logger.info(f"[CHAT] user={user_id} onboarding mode")
         reply = await _handle_onboarding(user_id, user_msg, session)
+        logger.info(f"[CHAT] user={user_id} onboarding reply={reply!r}")
         return StreamingResponse(
             iter([
                 f'data: {json.dumps({"token": reply, "done": False})}\n\n',
@@ -515,7 +539,9 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
     user_msg_lower = user_msg.lower()
 
     if any(word in user_msg_lower for word in ["balance", "account", "how much money", "bank"]):
+        logger.info(f"[CHAT] user={user_id} intent=tool_balance")
         result = await tools.execute("get_balance", {"user_id": user_id})
+        logger.info(f"[CHAT] user={user_id} balance_result={result[:120]!r}")
         if result.startswith("[PENDING:"):
             response = f"I need your approval for that. {result}"
         else:
@@ -618,9 +644,12 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
         )
 
     if is_memory_question(user_msg):
+        logger.info(f"[CHAT] user={user_id} intent=memory_question")
         facts = memory.retrieve(user_msg, user_id=user_id)
+        logger.debug(f"[CHAT] user={user_id} retrieved_facts={facts[:200]!r}")
         if not facts or facts.strip() == "" or not facts_are_relevant(facts, user_msg):
             denial = await generate_dynamic_denial(user_msg)
+            logger.info(f"[CHAT] user={user_id} memory_denial={denial!r}")
             memory.save_interaction(session, user_msg, denial, [], user_id=user_id)
             memory.store_conversation_turn(session, "user", user_msg, user_id=user_id)
             memory.store_conversation_turn(session, "assistant", denial, user_id=user_id)
@@ -649,16 +678,18 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
     trail_context = trails.get_trail_context_for_prompt(trail_id, user_id=user_id, user_name=user_name, max_nodes=3)
     nudge = daemon.generate_proactive_nudge(user_msg, user_id=user_id)
 
-    memory.save_interaction(session, user_msg, "", [], user_id=user_id)
-    history = memory.get_recent_history(session, MEMORY_LIMIT, user_id=user_id)
-    all_facts = memory.sqlite.get_facts(user_id=user_id)
-    available_tools = tools.get_available_tools()
-
     intent = "general_chat"
     if any(k in user_msg_lower for k in ["what", "remember", "do you know", "tell me about"]):
         intent = "fact_recall"
     elif any(k in user_msg_lower for k in ["scan", "balance", "note", "transfer", "update"]):
         intent = "tool_use"
+
+    logger.info(f"[CHAT] user={user_id} intent={intent} trail={trail_id}")
+
+    memory.save_interaction(session, user_msg, "", [], user_id=user_id)
+    history = memory.get_recent_history(session, MEMORY_LIMIT, user_id=user_id)
+    all_facts = memory.sqlite.get_facts(user_id=user_id)
+    available_tools = tools.get_available_tools()
 
     personality = load_personality(user_name=user_name)
     system_content = build_system_message(
@@ -670,20 +701,25 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
         messages.append({"role": msg["role"], "content": msg["content"]})
     messages.append({"role": "user", "content": user_msg})
 
+    logger.debug(f"[CHAT] user={user_id} system_prompt_len={len(system_content)} history_len={len(history)}")
+
     async def event_generator():
         full_reply = ""
         tool_name = None
         tool_params = {}
 
         try:
+            logger.info(f"[INFERENCE] user={user_id} sending {len(messages)} messages to model={MODEL_NAME}")
             async for chunk in stream_chat(messages, available_tools):
                 data = json.loads(chunk)
                 if "error" in data:
+                    logger.error(f"[INFERENCE] user={user_id} stream_error={data}")
                     yield f'data: {json.dumps(data)}\n\n'
                     return
                 if "tool_call" in data:
                     tool_name = data["tool"]
                     tool_params = data.get("params", {})
+                    logger.info(f"[CHAT] user={user_id} llm_tool_call={tool_name} params={tool_params}")
                     yield f'data: {json.dumps({"token": f"\n[Using tool: {tool_name}...]\n"})}\n\n'
                     continue
                 if "token" in data:
@@ -695,6 +731,7 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
             if tool_name:
                 tool_params["user_id"] = user_id
                 tool_result = await tools.execute(tool_name, tool_params)
+                logger.info(f"[CHAT] user={user_id} tool={tool_name} result={tool_result[:120]!r}")
                 if tool_result.startswith("[PENDING:"):
                     full_reply = f"I need your approval for that. Say 'confirm {tool_name}' to proceed."
                     yield f'data: {json.dumps({"token": full_reply})}\n\n'
@@ -715,6 +752,7 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
                     full_reply = followup
 
             full_reply = sanitize_response(full_reply)
+            logger.info(f"[CHAT] user={user_id} final_reply={full_reply[:200]!r}")
 
             # Append to trail
             trails.append_to_trail(trail_id, full_reply, role="assistant", user_id=user_id, source_type="chat")
@@ -729,10 +767,11 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
             yield f'data: {json.dumps({"done": True, "full": full_reply})}\n\n'
 
             background_tasks.add_task(fact_extractor.extract, user_msg, full_reply, user_id)
+            logger.info(f"[LEARN] user={user_id} queued background fact extraction")
 
         except Exception as e:
             error_msg = str(e) or f"Stream crashed: {type(e).__name__}"
-            print(f"[STREAM ERROR] {error_msg}")
+            logger.exception(f"[STREAM ERROR] user={user_id} {error_msg}")
             yield f'data: {json.dumps({"error": f"Stream failed: {error_msg}"})}\n\n'
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

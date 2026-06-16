@@ -1,12 +1,19 @@
 """EUNICE v0.8 — Memory Tests (multi-user)"""
 import pytest
+import memory.sqlite_store
+import memory.vector_store
+import memory.trail_store
 from memory.manager import MemoryManager
 
 @pytest.fixture
 def mm(tmp_path):
-    import config
-    config.DB_PATH = tmp_path / "test.db"
-    config.CHROMA_PATH = tmp_path / "chroma"
+    # Patch module-level paths so each test gets an isolated DB.
+    # These are imported at module load time, so updating config.* alone is not enough.
+    db_path = tmp_path / "test.db"
+    chroma_path = tmp_path / "chroma"
+    memory.sqlite_store.DB_PATH = db_path
+    memory.vector_store.CHROMA_PATH = chroma_path
+    memory.trail_store.DB_PATH = db_path
     return MemoryManager()
 
 

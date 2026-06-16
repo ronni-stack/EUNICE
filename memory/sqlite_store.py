@@ -81,20 +81,20 @@ class SQLiteStore:
                 c.execute("ALTER TABLE messages ADD COLUMN user_id TEXT DEFAULT 'ronny'")
 
             # Sessions table (migrate to composite PK on user_id + id)
-            c.execute("""
-                CREATE TABLE IF NOT EXISTS sessions_new (
-                    user_id TEXT DEFAULT 'ronny',
-                    id TEXT DEFAULT 'default',
-                    title TEXT,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    last_active TEXT DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (user_id, id)
-                )
-            """)
-
-            # Migrate legacy sessions if old table still exists
             c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
-            if c.fetchone():
+            sessions_exists = c.fetchone()
+            if sessions_exists:
+                # Legacy table exists: create new, migrate, drop old, rename
+                c.execute("""
+                    CREATE TABLE IF NOT EXISTS sessions_new (
+                        user_id TEXT DEFAULT 'ronny',
+                        id TEXT DEFAULT 'default',
+                        title TEXT,
+                        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                        last_active TEXT DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (user_id, id)
+                    )
+                """)
                 if not self._column_exists(conn, "sessions", "user_id"):
                     c.execute("""
                         INSERT OR IGNORE INTO sessions_new (user_id, id, title, created_at, last_active)
@@ -107,26 +107,37 @@ class SQLiteStore:
                     """)
                 c.execute("DROP TABLE sessions")
                 c.execute("ALTER TABLE sessions_new RENAME TO sessions")
+            else:
+                # Fresh DB: create final table directly
+                c.execute("""
+                    CREATE TABLE IF NOT EXISTS sessions (
+                        user_id TEXT DEFAULT 'ronny',
+                        id TEXT DEFAULT 'default',
+                        title TEXT,
+                        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                        last_active TEXT DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (user_id, id)
+                    )
+                """)
 
             # Facts table: migrate to (user_id, key) uniqueness
-            c.execute("""
-                CREATE TABLE IF NOT EXISTS facts_new (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id TEXT DEFAULT 'ronny',
-                    key TEXT NOT NULL,
-                    value TEXT,
-                    category TEXT DEFAULT 'general',
-                    confidence REAL DEFAULT 1.0,
-                    source TEXT DEFAULT 'explicit',
-                    reinforcement_count INTEGER DEFAULT 1,
-                    timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(user_id, key)
-                )
-            """)
-
-            # Migrate legacy facts if old table still exists
             c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='facts'")
-            if c.fetchone():
+            facts_exists = c.fetchone()
+            if facts_exists:
+                c.execute("""
+                    CREATE TABLE IF NOT EXISTS facts_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id TEXT DEFAULT 'ronny',
+                        key TEXT NOT NULL,
+                        value TEXT,
+                        category TEXT DEFAULT 'general',
+                        confidence REAL DEFAULT 1.0,
+                        source TEXT DEFAULT 'explicit',
+                        reinforcement_count INTEGER DEFAULT 1,
+                        timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(user_id, key)
+                    )
+                """)
                 if not self._column_exists(conn, "facts", "user_id"):
                     c.execute("""
                         INSERT OR IGNORE INTO facts_new (user_id, key, value, category, confidence, source, reinforcement_count, timestamp)
@@ -139,6 +150,21 @@ class SQLiteStore:
                     """)
                 c.execute("DROP TABLE facts")
                 c.execute("ALTER TABLE facts_new RENAME TO facts")
+            else:
+                c.execute("""
+                    CREATE TABLE IF NOT EXISTS facts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id TEXT DEFAULT 'ronny',
+                        key TEXT NOT NULL,
+                        value TEXT,
+                        category TEXT DEFAULT 'general',
+                        confidence REAL DEFAULT 1.0,
+                        source TEXT DEFAULT 'explicit',
+                        reinforcement_count INTEGER DEFAULT 1,
+                        timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(user_id, key)
+                    )
+                """)
 
             conn.commit()
 
