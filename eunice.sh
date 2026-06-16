@@ -28,10 +28,11 @@ show_help() {
     echo "  help     Show this help message"
     echo ""
     echo "Typical workflow:"
-    echo "  Terminal 1: ollama serve"
-    echo "  Terminal 2: ./eunice.sh launch"
+    echo "  ./eunice.sh launch"
     echo ""
     echo "Then open: http://\$(hostname -I | awk '{print \$1}'):8000"
+    echo ""
+    echo "Logs: tail -f data/eunice.log"
 }
 
 cmd_setup() {
