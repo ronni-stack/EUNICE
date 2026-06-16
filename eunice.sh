@@ -97,10 +97,36 @@ cmd_launch() {
 
     source venv/bin/activate
 
+    STARTED_OLLAMA=false
     if ! curl -s http://localhost:11434 > /dev/null 2>&1; then
-        echo "WARNING: Ollama is not running. Start it first with: ollama serve"
+        if command -v ollama &> /dev/null; then
+            echo "Starting Ollama in the background..."
+            ollama serve > /tmp/ollama_eunice.log 2>&1 &
+            OLLAMA_PID=$!
+            STARTED_OLLAMA=true
+
+            # Wait for Ollama to become ready
+            for i in {1..30}; do
+                if curl -s http://localhost:11434 > /dev/null 2>&1; then
+                    echo "Ollama is ready."
+                    break
+                fi
+                sleep 1
+            done
+
+            if ! curl -s http://localhost:11434 > /dev/null 2>&1; then
+                echo "ERROR: Ollama failed to start. Check /tmp/ollama_eunice.log"
+                exit 1
+            fi
+        else
+            echo "ERROR: Ollama is not installed and not running. Run ./eunice.sh setup first."
+            exit 1
+        fi
+    else
+        echo "Ollama is already running."
     fi
 
+    echo ""
     echo "╔══════════════════════════════════════════╗"
     echo "║     EUNICE v0.8 Launching...             ║"
     echo "║     Model: $MODEL                        ║"
@@ -110,7 +136,21 @@ cmd_launch() {
     echo "Press Ctrl+C to stop."
     echo ""
 
+    # Trap Ctrl+C so we can shut down Ollama if we started it
+    cleanup() {
+        echo ""
+        echo "Shutting down EUNICE..."
+        if [ "$STARTED_OLLAMA" = true ]; then
+            echo "Stopping Ollama (PID $OLLAMA_PID)..."
+            kill $OLLAMA_PID 2>/dev/null || true
+            wait $OLLAMA_PID 2>/dev/null || true
+        fi
+    }
+    trap cleanup INT TERM
+
     python3 main.py
+
+    cleanup
 }
 
 cmd_test() {
