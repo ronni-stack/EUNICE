@@ -175,6 +175,20 @@ class SQLiteStore:
                     )
                 """)
 
+            # --- Documents index (v0.9) ---
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS documents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    doc_hash TEXT UNIQUE,
+                    user_id TEXT,
+                    filename TEXT,
+                    content_type TEXT,
+                    chunk_count INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+            """)
+
             # --- Identity & device tables (v0.9) ---
             c.execute("""
                 CREATE TABLE IF NOT EXISTS identities (
@@ -318,6 +332,32 @@ class SQLiteStore:
             c.execute("SELECT revoked FROM identity_tokens WHERE jti = ?", (jti,))
             row = c.fetchone()
             return row is None or bool(row[0])
+
+    # --- Documents index ---
+    def has_document(self, doc_hash: str, user_id: str) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("SELECT 1 FROM documents WHERE doc_hash = ? AND user_id = ?", (doc_hash, user_id))
+            return c.fetchone() is not None
+
+    def add_document_index(self, doc_hash: str, user_id: str, filename: str,
+                           content_type: str, chunk_count: int):
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO documents (doc_hash, user_id, filename, content_type, chunk_count)
+                VALUES (?, ?, ?, ?, ?)
+            """, (doc_hash, user_id, filename, content_type, chunk_count))
+            conn.commit()
+
+    def list_documents(self, user_id: str) -> list:
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute(
+                "SELECT doc_hash, filename, content_type, chunk_count, created_at FROM documents WHERE user_id = ? ORDER BY created_at DESC",
+                (user_id,)
+            )
+            return [self._row_to_dict(c, r) for r in c.fetchall()]
 
     # --- Users ---
     def ensure_user(self, user_id: str, name: str = None):

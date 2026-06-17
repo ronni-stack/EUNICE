@@ -30,6 +30,16 @@ class MemoryManager:
     def update_user_tone(self, user_id: str, **tones):
         return self.sqlite.update_user_tone(user_id, **tones)
 
+    def has_document(self, doc_hash: str, user_id: str = DEFAULT_USER_ID) -> bool:
+        return self.sqlite.has_document(doc_hash, user_id)
+
+    def add_document_index(self, doc_hash: str, user_id: str, filename: str,
+                           content_type: str, chunk_count: int):
+        return self.sqlite.add_document_index(doc_hash, user_id, filename, content_type, chunk_count)
+
+    def list_documents(self, user_id: str = DEFAULT_USER_ID) -> list:
+        return self.sqlite.list_documents(user_id)
+
     def is_onboarded(self, user_id: str) -> bool:
         user = self.sqlite.get_user(user_id)
         if not user:

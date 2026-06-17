@@ -78,7 +78,8 @@ cmd_setup() {
         sqlalchemy alembic \
         rich typer \
         pytest pytest-asyncio \
-        bcrypt pyjwt
+        bcrypt pyjwt \
+        pymupdf
 
     echo ""
     echo "[5/5] Creating directories..."

@@ -22,6 +22,7 @@ from core.background_daemon import BackgroundDaemon
 from core.onboarding import OnboardingEngine
 from core.fact_extractor import FactExtractor
 from core.tone import format_tone_instruction
+from core.ingestion import IngestionPipeline
 from memory.manager import MemoryManager
 from memory.trail_manager import TrailManager
 
@@ -56,6 +57,7 @@ tools = ToolRouter()
 trails = TrailManager()
 daemon = BackgroundDaemon(check_interval=900)
 fact_extractor = FactExtractor(memory)
+ingestion = IngestionPipeline(memory)
 identity_manager = IdentityManager()
 logger = logging.getLogger("eunice.api")
 
@@ -160,6 +162,29 @@ def is_memory_question(text: str) -> bool:
     ]
     return any(re.search(p, text_lower) for p in patterns)
 
+def _looks_like_document_query(text: str) -> bool:
+    """Heuristic: does the query seem to ask about uploaded documents?"""
+    lower = text.lower()
+    triggers = [
+        "document", "pdf", "file", "my notes", "in my", "according to",
+        "from the", "the report", "the paper", "the article", "mentions",
+        "says that", "stated that", "summarize", "what does it say"
+    ]
+    return any(t in lower for t in triggers)
+
+
+def _retrieve_document_context(user_msg: str, user_id: str, max_chunks: int = 3) -> str:
+    """Retrieve relevant document chunks and format them for the prompt."""
+    chunks = ingestion.retrieve_relevant_chunks(user_msg, user_id, n_results=max_chunks)
+    if not chunks:
+        return ""
+    lines = []
+    for i, chunk in enumerate(chunks[:max_chunks], 1):
+        source = chunk.get("filename", "document")
+        lines.append(f"[Excerpt {i} from {source}]\n{chunk['content']}")
+    return "\n\n".join(lines)
+
+
 def facts_are_relevant(facts_text: str, query: str) -> bool:
     if not facts_text or facts_text.strip() == "":
         return False
@@ -205,7 +230,8 @@ async def generate_dynamic_denial(user_msg: str) -> str:
 # --- Single System Message Builder with Trail Context ---
 def build_system_message(personality: str, intent: str, user_msg: str,
                          facts: dict, trail_context: str = "", tools: list = None,
-                         user_name: str = "the user", tone: dict = None) -> str:
+                         user_name: str = "the user", tone: dict = None,
+                         doc_context: str = "") -> str:
     """Build ONE system message with identity, personality, voice, context, and rules."""
 
     # 1. IDENTITY (always first)
@@ -234,12 +260,17 @@ How EUNICE does NOT speak:
 
     parts = [identity, personality, voice_examples]
 
-    # 4. TRAIL CONTEXT
+    # 4. DOCUMENT CONTEXT (RAG)
+    if doc_context:
+        parts.append("Relevant document excerpts:\n" + doc_context)
+        parts.append("Rule for documents: Base your answer on the excerpts above when the question relates to them. Do not invent details not present in the excerpts.")
+
+    # 5. TRAIL CONTEXT
     if trail_context:
         parts.append(trail_context)
         parts.append("Rule for facts: Only use what the user explicitly told you. If they didn't mention something, admit you don't know. Never invent.")
 
-    # 5. RELEVANT FACTS
+    # 6. RELEVANT FACTS
     if intent == "fact_recall" and facts:
         relevant = []
         query_words = set(user_msg.lower().split())
@@ -250,19 +281,19 @@ How EUNICE does NOT speak:
         if relevant:
             parts.append("Known facts:\n" + "\n".join([f"- {f}" for f in relevant[:3]]))
 
-    # 6. TOOLS
+    # 7. TOOLS
     elif intent == "tool_use" and tools:
         tool_text = "Available tools:\n" + "\n".join([f"- {t['name']}: {t['description']}" for t in tools])
         tool_text += "\nTo use a tool, respond with JSON: {\"tool\": \"name\", \"params\": {}}"
         parts.append(tool_text)
 
-    # 7. GENERAL CHAT
+    # 8. GENERAL CHAT
     elif intent == "general_chat" and facts:
         recent = list(facts.values())[:2]
         if recent:
             parts.append("Recent context:\n" + "\n".join([f"- {f}" for f in recent]))
 
-    # 8. ANTI-GENERIC RULES
+    # 9. ANTI-GENERIC RULES
     parts.append("Rule: Never start with 'It seems like...' or 'I understand that...' Just answer directly.")
     parts.append("Rule: Never end with 'If there's anything else...' or 'Feel free to ask!' Just stop when you're done.")
     parts.append(f"Rule: Speak to {user_name} like you've worked together for years. No introductions, no explanations.")
@@ -592,9 +623,10 @@ async def chat(request: Request, background_tasks: BackgroundTasks, token: str =
 
     personality = load_personality(user_name=user_name)
     tone = memory.get_user_tone(user_id)
+    doc_context = _retrieve_document_context(user_msg, user_id) if _looks_like_document_query(user_msg) else ""
     system_content = build_system_message(
         personality, intent, user_msg, all_facts, trail_context, available_tools,
-        user_name=user_name, tone=tone
+        user_name=user_name, tone=tone, doc_context=doc_context
     )
 
     messages = [{"role": "system", "content": system_content}]
@@ -837,9 +869,10 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
 
     personality = load_personality(user_name=user_name)
     tone = memory.get_user_tone(user_id)
+    doc_context = _retrieve_document_context(user_msg, user_id) if _looks_like_document_query(user_msg) else ""
     system_content = build_system_message(
         personality, intent, user_msg, all_facts, trail_context, available_tools,
-        user_name=user_name, tone=tone
+        user_name=user_name, tone=tone, doc_context=doc_context
     )
 
     messages = [{"role": "system", "content": system_content}]
@@ -980,6 +1013,44 @@ async def set_trail_status(trail_id: str, request: Request, token: str = Depends
         raise HTTPException(status_code=400, detail="status must be active, dormant, or archived")
     trails.store.set_trail_status(trail_id, status, user_id=user_id)
     return {"trail_id": trail_id, "status": status}
+
+
+# --- Document Ingestion ---
+@app.post("/docs/upload")
+async def upload_document(
+    request: Request,
+    filename: str,
+    token: str = Depends(verify_token)
+):
+    """Upload a PDF, TXT, or MD document for RAG retrieval."""
+    user_id = await _resolve_user_id(request)
+    body = await request.body()
+
+    if not body:
+        raise HTTPException(status_code=400, detail="Empty file body")
+
+    allowed_extensions = {".pdf", ".txt", ".md"}
+    ext = Path(filename).suffix.lower()
+    if ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type: {ext}. Allowed: {allowed_extensions}"
+        )
+
+    try:
+        result = await ingestion.ingest(filename, body, user_id)
+        logger.info(f"[INGEST] user={user_id} filename={filename} result={result['status']} chunks={result.get('chunks', 0)}")
+        return result
+    except Exception as e:
+        logger.exception(f"[INGEST ERROR] user={user_id} filename={filename} error={e}")
+        raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}")
+
+
+@app.get("/docs")
+async def list_documents(request: Request, token: str = Depends(verify_token)):
+    """List uploaded documents for the current user."""
+    user_id = await _resolve_user_id(request)
+    return {"documents": memory.list_documents(user_id)}
 
 
 # --- Health & Sessions ---
