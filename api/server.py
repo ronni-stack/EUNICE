@@ -23,6 +23,7 @@ from core.onboarding import OnboardingEngine
 from core.fact_extractor import FactExtractor
 from core.tone import format_tone_instruction
 from core.ingestion import IngestionPipeline
+from core.research import ResearchAssistant
 from memory.manager import MemoryManager
 from memory.trail_manager import TrailManager
 
@@ -58,6 +59,7 @@ trails = TrailManager()
 daemon = BackgroundDaemon(check_interval=900)
 fact_extractor = FactExtractor(memory)
 ingestion = IngestionPipeline(memory)
+research = ResearchAssistant(memory)
 identity_manager = IdentityManager()
 logger = logging.getLogger("eunice.api")
 
@@ -1051,6 +1053,25 @@ async def list_documents(request: Request, token: str = Depends(verify_token)):
     """List uploaded documents for the current user."""
     user_id = await _resolve_user_id(request)
     return {"documents": memory.list_documents(user_id)}
+
+
+@app.post("/research")
+async def research_endpoint(request: Request, token: str = Depends(verify_token)):
+    """Research a query on the web and return a summarized answer with sources."""
+    body = await request.json()
+    query = body.get("query", "").strip()
+    max_results = min(int(body.get("max_results", 5)), 10)
+    fetch_full = bool(body.get("fetch_full", True))
+
+    if not query:
+        raise HTTPException(status_code=400, detail="query is required")
+
+    try:
+        result = await research.research(query, max_results=max_results, fetch_full=fetch_full)
+        return result
+    except Exception as e:
+        logger.exception(f"[RESEARCH ERROR] query={query!r} error={e}")
+        raise HTTPException(status_code=500, detail=f"Research failed: {e}")
 
 
 # --- Health & Sessions ---

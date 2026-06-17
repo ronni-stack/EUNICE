@@ -1,4 +1,5 @@
-"""EUNICE v0.8 — Unified Memory Manager (SQLite + ChromaDB, multi-user) with Validation"""
+"""EUNICE v0.9 — Unified Memory Manager (SQLite + ChromaDB, multi-user) with Validation"""
+from typing import Optional
 from memory.sqlite_store import SQLiteStore
 from memory.vector_store import VectorStore
 from core.fact_validator import FactValidator
@@ -39,6 +40,12 @@ class MemoryManager:
 
     def list_documents(self, user_id: str = DEFAULT_USER_ID) -> list:
         return self.sqlite.list_documents(user_id)
+
+    def get_research_cache(self, query: str) -> Optional[str]:
+        return self.sqlite.get_research_cache(query)
+
+    def set_research_cache(self, query: str, results: str, ttl_hours: int = 24):
+        return self.sqlite.set_research_cache(query, results, ttl_hours)
 
     def is_onboarded(self, user_id: str) -> bool:
         user = self.sqlite.get_user(user_id)

@@ -79,7 +79,8 @@ cmd_setup() {
         rich typer \
         pytest pytest-asyncio \
         bcrypt pyjwt \
-        pymupdf
+        pymupdf \
+        duckduckgo-search beautifulsoup4
 
     echo ""
     echo "[5/5] Creating directories..."

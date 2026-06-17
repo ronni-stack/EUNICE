@@ -175,6 +175,18 @@ class SQLiteStore:
                     )
                 """)
 
+            # --- Research cache (v0.9) ---
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS research_cache (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    query TEXT NOT NULL,
+                    results TEXT,
+                    expires_at TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(query)
+                )
+            """)
+
             # --- Documents index (v0.9) ---
             c.execute("""
                 CREATE TABLE IF NOT EXISTS documents (
@@ -332,6 +344,32 @@ class SQLiteStore:
             c.execute("SELECT revoked FROM identity_tokens WHERE jti = ?", (jti,))
             row = c.fetchone()
             return row is None or bool(row[0])
+
+    # --- Research cache ---
+    def get_research_cache(self, query: str) -> Optional[str]:
+        """Return cached research results if not expired."""
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute(
+                "SELECT results FROM research_cache WHERE query = ? AND expires_at > datetime('now')",
+                (query,)
+            )
+            row = c.fetchone()
+            return row[0] if row else None
+
+    def set_research_cache(self, query: str, results: str, ttl_hours: int = 24):
+        """Cache research results with TTL."""
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO research_cache (query, results, expires_at)
+                VALUES (?, ?, datetime('now', '+{} hours'))
+                ON CONFLICT(query) DO UPDATE SET
+                    results=excluded.results,
+                    expires_at=excluded.expires_at,
+                    created_at=datetime('now')
+            """.format(ttl_hours), (query, results))
+            conn.commit()
 
     # --- Documents index ---
     def has_document(self, doc_hash: str, user_id: str) -> bool:
