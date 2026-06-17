@@ -604,6 +604,16 @@ class SQLiteStore:
             c.execute("DELETE FROM sessions WHERE user_id = ? AND id = ?", (user_id, session))
             conn.commit()
 
+    def rename_session(self, session: str, new_name: str, user_id: str = DEFAULT_USER_ID):
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute(
+                "UPDATE sessions SET title = ? WHERE user_id = ? AND id = ?",
+                (new_name, user_id, session)
+            )
+            conn.commit()
+            return c.rowcount > 0
+
     # --- Facts ---
     def save_fact(self, key: str, value: str, category: str = "general", confidence: float = 1.0,
                   user_id: str = DEFAULT_USER_ID, source: str = "explicit"):

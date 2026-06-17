@@ -77,6 +77,9 @@ class MemoryManager:
     def delete_session(self, session: str, user_id: str = DEFAULT_USER_ID):
         return self.sqlite.delete_session(session, user_id)
 
+    def rename_session(self, session: str, new_name: str, user_id: str = DEFAULT_USER_ID):
+        return self.sqlite.rename_session(session, new_name, user_id)
+
     # --- Semantic (ChromaDB) with Validation ---
     def store_fact(self, fact: str, category: str = "general", source: str = "explicit",
                    user_id: str = DEFAULT_USER_ID) -> bool:

@@ -5,7 +5,7 @@ import json
 import logging
 import httpx
 from typing import AsyncGenerator
-from config import OLLAMA_URL, MODEL_NAME
+from config import OLLAMA_URL, MODEL_NAME, OLLAMA_TIMEOUT
 
 logger = logging.getLogger("eunice.inference")
 
@@ -28,7 +28,7 @@ async def stream_chat(messages: list, tools: list = None) -> AsyncGenerator[str,
     is_tool = False
 
     try:
-        async with httpx.AsyncClient(timeout=180.0) as client:
+        async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:
             async with client.stream("POST", OLLAMA_CHAT_URL, json=payload) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
@@ -55,6 +55,10 @@ async def stream_chat(messages: list, tools: list = None) -> AsyncGenerator[str,
     except httpx.ConnectError as e:
         logger.error(f"[OLLAMA] ConnectError: {e}")
         yield json.dumps({"error": "Ollama is not running. Start it with: ollama serve"})
+        return
+    except httpx.ReadTimeout as e:
+        logger.error(f"[OLLAMA] ReadTimeout (model took too long to respond): {e}")
+        yield json.dumps({"error": f"Ollama timed out after {OLLAMA_TIMEOUT}s. Try a smaller model (e.g. llama3.2:3b) or increase EUNICE_OLLAMA_TIMEOUT."})
         return
     except httpx.ReadError as e:
         logger.error(f"[OLLAMA] ReadError (connection dropped): {e}")

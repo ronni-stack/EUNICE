@@ -1,962 +1,1474 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>EUNICE v0.9</title>
-<style>
-:root { --bg:#0b0b0b; --surface:#141414; --surface-hover:#1f1f1f; --text:#e8e8e8; --text-muted:#777; --accent:#00d4aa; --accent-dim:rgba(0,212,170,0.12); --user-bubble:#252525; --ai-bubble:#001a14; --border:#2a2a2a; --danger:#ff4444; --sidebar-width:280px; }
-* { margin:0; padding:0; box-sizing:border-box; }
-html, body { height:100%; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; overflow:hidden; }
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EUNICE</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+  <style>
+    :root {
+      --bg: #0d0d0d;
+      --surface: #171717;
+      --surface-hover: #262626;
+      --surface-active: #333333;
+      --border: #2a2a2a;
+      --text: #f5f5f5;
+      --text-secondary: #a3a3a3;
+      --text-muted: #737373;
+      --accent: #10a37f;
+      --accent-hover: #0d8c6d;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --code-bg: #1e1e1e;
+      --user-bubble: #10a37f;
+      --user-bubble-text: #ffffff;
+      --ai-bubble: #262626;
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      --sidebar-width: 280px;
+      --header-height: 56px;
+      --input-height: 80px;
+      --shadow: 0 4px 24px rgba(0,0,0,0.4);
+    }
 
-/* Sidebar */
-#sidebar { position:fixed; top:0; left:0; bottom:0; width:var(--sidebar-width); background:var(--surface); border-right:1px solid var(--border); z-index:250; transform:translateX(-100%); transition:transform .3s ease; display:flex; flex-direction:column; }
-#sidebar.open { transform:translateX(0); }
-#sidebar-header { padding:14px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }
-#sidebar-header h2 { font-size:14px; color:var(--accent); letter-spacing:1px; }
-#new-chat-sidebar { padding:10px 14px; border-bottom:1px solid var(--border); }
-#new-chat-sidebar button { width:100%; padding:10px; border-radius:10px; border:none; background:var(--accent); color:#000; font-weight:600; font-size:13px; cursor:pointer; }
-#new-chat-sidebar button:active { transform:scale(.98); }
-#session-list { flex:1; overflow-y:auto; padding:8px; }
-.session-item { padding:10px 12px; border-radius:10px; cursor:pointer; margin-bottom:4px; transition:background .15s; display:flex; align-items:center; gap:8px; }
-.session-item:hover { background:var(--surface-hover); }
-.session-item.active { background:var(--accent-dim); }
-.session-item .s-title { font-size:13px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; }
-.session-item .s-date { font-size:10px; color:var(--text-muted); flex-shrink:0; }
-.session-delete { width:20px; height:20px; border-radius:4px; border:none; background:transparent; color:var(--text-muted); display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:12px; opacity:0; transition:opacity .2s; }
-.session-item:hover .session-delete { opacity:1; }
-.session-delete:hover { color:var(--danger); background:rgba(255,68,68,.15); }
-#sidebar-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:240; }
-#sidebar-overlay.active { display:block; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); overflow: hidden; }
+    button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+    a { color: var(--accent); }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--surface-active); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #444; }
 
-/* Header */
-#header { position:fixed; top:0; left:0; right:0; height:50px; padding:10px 14px; background:var(--surface); border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; gap:10px; z-index:100; }
-#header-left { display:flex; align-items:center; gap:10px; flex:1; min-width:0; }
-#menu-btn { width:34px; height:34px; border-radius:8px; border:none; background:var(--surface-hover); color:var(--text-muted); display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0; }
-#menu-btn:hover { color:var(--accent); background:var(--accent-dim); }
-#menu-btn svg { width:18px; height:18px; }
-#header h1 { font-size:17px; font-weight:700; letter-spacing:1.5px; color:var(--accent); white-space:nowrap; }
-#header-center { flex:1; min-width:0; text-align:center; }
-#current-session-title { font-size:12px; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-#status { font-size:11px; color:var(--text-muted); display:flex; align-items:center; gap:6px; flex-shrink:0; }
-#status-dot { width:7px; height:7px; border-radius:50%; background:var(--danger); transition:background .3s; }
-#status-dot.online { background:var(--accent); box-shadow:0 0 6px var(--accent); }
-#version-badge { font-size:10px; color:var(--text-muted); margin-left:4px; }
-.icon-btn { width:34px; height:34px; border-radius:8px; border:none; background:var(--surface-hover); color:var(--text-muted); display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0; }
-.icon-btn:hover { color:var(--accent); background:var(--accent-dim); }
-.icon-btn svg { width:18px; height:18px; }
+    /* Loading overlay */
+    #loading-overlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 2000; }
+    .loader { width: 40px; height: 40px; border: 3px solid var(--surface-active); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
-/* Chat */
-#chat-wrapper { position:fixed; top:50px; left:0; right:0; bottom:80px; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:10px; }
-.message { max-width:86%; padding:10px 13px; border-radius:14px; font-size:15px; line-height:1.45; word-wrap:break-word; flex-shrink:0; }
-.message.user { align-self:flex-end; background:var(--user-bubble); border-bottom-right-radius:3px; animation:fadeIn .2s ease; }
-.message.ai { align-self:flex-start; background:var(--ai-bubble); border:1px solid #002a20; border-bottom-left-radius:3px; }
-.message.ai.new { animation:fadeIn .2s ease; }
-.message.ai.streaming { border-color: var(--accent); box-shadow:0 0 0 1px var(--accent-dim); }
-.message.ai .label { font-size:10px; color:var(--accent); margin-bottom:3px; font-weight:700; letter-spacing:.5px; }
-@keyframes fadeIn { from{opacity:0;transform:translateY(6px);} to{opacity:1;transform:translateY(0);} }
-#typing { display:none; align-self:flex-start; padding:6px 12px; font-size:12px; color:var(--text-muted); font-style:italic; flex-shrink:0; }
+    /* Layout */
+    #app { display: flex; height: 100vh; width: 100vw; }
 
-/* Input */
-#input-area { position:fixed; bottom:0; left:0; right:0; height:80px; padding:10px 12px; padding-bottom:max(10px, env(safe-area-inset-bottom)); background:var(--surface); border-top:1px solid var(--border); display:flex; gap:8px; align-items:center; z-index:100; }
-#msg-input { flex:1; background:var(--bg); border:1px solid var(--border); border-radius:18px; padding:10px 14px; color:var(--text); font-size:16px; outline:none; resize:none; height:44px; max-height:60px; font-family:inherit; line-height:1.4; }
-#msg-input:focus { border-color:var(--accent); }
-#msg-input:disabled { opacity:.5; cursor:not-allowed; }
-.btn { width:44px; height:44px; border-radius:50%; border:none; background:var(--surface-hover); color:var(--text); display:flex; align-items:center; justify-content:center; cursor:pointer; transition:all .2s; flex-shrink:0; }
-.btn:disabled { opacity:.4; cursor:not-allowed; }
-.btn:active:not(:disabled) { transform:scale(.92); }
-.btn:hover:not(:disabled) { background:var(--accent-dim); color:var(--accent); }
-.btn svg { width:20px; height:20px; }
-.btn.send { background:var(--accent); color:#000; }
-.btn.send:hover:not(:disabled) { background:#00bfa0; }
-.btn.pause { background:var(--danger); color:#fff; }
-.btn.pause:hover:not(:disabled) { background:#cc3333; }
-.btn.recording { background:var(--danger); color:#fff; animation:pulse 1.2s infinite; }
-@keyframes pulse { 0%,100%{box-shadow:0 0 0 0 rgba(255,68,68,.35);} 50%{box-shadow:0 0 0 10px rgba(255,68,68,0);} }
+    /* Sidebar */
+    #sidebar {
+      width: var(--sidebar-width);
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      transition: transform .25s ease;
+    }
+    #sidebar.hidden { transform: translateX(-100%); width: 0; border: none; overflow: hidden; }
+    .sidebar-header { padding: 14px; border-bottom: 1px solid var(--border); }
+    .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; color: var(--accent); }
+    .logo svg { width: 24px; height: 24px; }
+    .new-chat-btn {
+      width: 100%;
+      margin-top: 12px;
+      padding: 10px 14px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+      background: var(--surface-hover);
+      color: var(--text);
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: background .15s;
+    }
+    .new-chat-btn:hover { background: var(--surface-active); }
+    .new-chat-btn svg { width: 16px; height: 16px; }
 
-/* Modal */
-#overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:200; justify-content:center; align-items:center; }
-#overlay.active { display:flex; }
-#modal { background:var(--surface); border:1px solid var(--border); border-radius:16px; width:92%; max-width:420px; max-height:80vh; overflow-y:auto; padding:18px; }
-#modal h2 { font-size:16px; margin-bottom:14px; color:var(--accent); }
-.modal-row { margin-bottom:14px; }
-.modal-row label { display:block; font-size:12px; color:var(--text-muted); margin-bottom:6px; text-transform:uppercase; letter-spacing:.5px; }
-.modal-row textarea, .modal-row select, .modal-row input { width:100%; background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:10px; color:var(--text); font-family:inherit; font-size:13px; }
-.modal-row textarea { min-height:120px; resize:vertical; }
-.toggle-row { display:flex; align-items:center; justify-content:space-between; }
-.toggle { width:44px; height:24px; border-radius:12px; background:#333; position:relative; cursor:pointer; transition:background .2s; }
-.toggle.on { background:var(--accent); }
-.toggle::after { content:""; position:absolute; top:2px; left:2px; width:20px; height:20px; border-radius:50%; background:#fff; transition:left .2s; }
-.toggle.on::after { left:22px; }
-.modal-btns { display:flex; gap:8px; justify-content:flex-end; margin-top:10px; }
-.modal-btns button { padding:8px 16px; border-radius:8px; border:none; font-size:13px; cursor:pointer; }
-#save-btn { background:var(--accent); color:#000; font-weight:600; }
-#cancel-btn { background:var(--surface-hover); color:var(--text); }
+    .sidebar-section-title { padding: 16px 14px 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted); }
+    #session-list { flex: 1; overflow-y: auto; padding: 0 8px 8px; }
+    .session-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-size: 14px;
+      color: var(--text-secondary);
+      transition: background .15s, color .15s;
+      margin-bottom: 2px;
+    }
+    .session-item:hover { background: var(--surface-hover); color: var(--text); }
+    .session-item.active { background: var(--surface-active); color: var(--text); }
+    .session-item .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 8px; }
+    .session-item .actions { display: none; gap: 4px; }
+    .session-item:hover .actions { display: flex; }
+    .session-item .actions button { padding: 4px; border-radius: 4px; color: var(--text-muted); }
+    .session-item .actions button:hover { color: var(--text); background: var(--surface-active); }
+    .session-item.editing input {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      padding: 4px 8px;
+      color: var(--text);
+      font-size: 14px;
+      outline: none;
+    }
 
-/* Auth Error Toast */
-#auth-error { display:none; position:fixed; top:60px; left:50%; transform:translateX(-50%); background:var(--danger); color:#fff; padding:10px 20px; border-radius:8px; font-size:13px; z-index:300; animation:slideDown .3s ease; white-space:nowrap; }
-@keyframes slideDown { from{opacity:0;transform:translateX(-50%) translateY(-20px);} to{opacity:1;transform:translateX(-50%) translateY(0);} }
+    .sidebar-footer { padding: 12px; border-top: 1px solid var(--border); }
+    .user-card { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: var(--radius-sm); cursor: pointer; }
+    .user-card:hover { background: var(--surface-hover); }
+    .user-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; color: #fff; }
+    .user-info { flex: 1; overflow: hidden; }
+    .user-name { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .user-meta { font-size: 11px; color: var(--text-muted); }
+    .sidebar-actions { display: flex; gap: 6px; margin-top: 8px; }
+    .sidebar-actions button {
+      flex: 1;
+      padding: 8px;
+      border-radius: var(--radius-sm);
+      background: var(--surface-hover);
+      color: var(--text-secondary);
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .sidebar-actions button:hover { background: var(--surface-active); color: var(--text); }
 
-/* Login Modal */
-#login-overlay { display:none; position:fixed; inset:0; background:var(--bg); z-index:400; justify-content:center; align-items:center; }
-#login-overlay.active { display:flex; }
-#login-modal { background:var(--surface); border:1px solid var(--border); border-radius:16px; width:92%; max-width:420px; padding:18px; }
-#login-modal h2 { font-size:16px; margin-bottom:14px; color:var(--accent); }
-.login-tab { flex:1; padding:8px; border-radius:8px; border:none; background:var(--surface-hover); color:var(--text-muted); font-size:13px; cursor:pointer; }
-.login-tab.active { background:var(--accent); color:#000; font-weight:600; }
-#login-btn { background:var(--accent); color:#000; font-weight:600; padding:8px 16px; border-radius:8px; border:none; font-size:13px; cursor:pointer; }
-#identity-display { font-size:11px; color:var(--text-muted); }
-</style>
+    /* Main */
+    #main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+
+    /* Header */
+    #top-bar {
+      height: var(--header-height);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      background: var(--bg);
+      flex-shrink: 0;
+    }
+    #top-bar-left, #top-bar-right { display: flex; align-items: center; gap: 10px; }
+    #menu-toggle { display: none; padding: 8px; border-radius: 8px; color: var(--text-secondary); }
+    #menu-toggle:hover { background: var(--surface-hover); color: var(--text); }
+    #chat-title { font-weight: 600; font-size: 15px; color: var(--text); max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #model-badge { font-size: 11px; padding: 4px 8px; border-radius: 20px; background: var(--surface); border: 1px solid var(--border); color: var(--text-muted); }
+    .top-btn { padding: 8px; border-radius: 8px; color: var(--text-secondary); display: flex; align-items: center; justify-content: center; }
+    .top-btn:hover { background: var(--surface-hover); color: var(--text); }
+    .top-btn svg { width: 18px; height: 18px; }
+
+    /* Chat area */
+    #chat-container { flex: 1; overflow-y: auto; position: relative; }
+    #welcome { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; text-align: center; }
+    #welcome h1 { font-size: 32px; font-weight: 700; margin-bottom: 12px; background: linear-gradient(90deg, var(--accent), #34d399); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    #welcome p { color: var(--text-secondary); max-width: 500px; margin-bottom: 32px; line-height: 1.5; }
+    .capability-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; max-width: 700px; width: 100%; }
+    .capability-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      text-align: left;
+      cursor: pointer;
+      transition: transform .15s, border-color .15s;
+    }
+    .capability-card:hover { transform: translateY(-2px); border-color: var(--accent); }
+    .capability-card .icon { width: 28px; height: 28px; border-radius: 8px; background: var(--surface-active); display: flex; align-items: center; justify-content: center; margin-bottom: 10px; color: var(--accent); }
+    .capability-card .title { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+    .capability-card .desc { font-size: 12px; color: var(--text-muted); line-height: 1.4; }
+
+    #messages { display: none; flex-direction: column; padding: 24px 0 120px; }
+    #messages.active { display: flex; }
+    .message-row { display: flex; padding: 16px 16%; }
+    .message-row.user { justify-content: flex-end; }
+    .message-row.ai { background: var(--surface); border-bottom: 1px solid var(--border); }
+    .message-content { max-width: 80%; width: 100%; }
+    .message-meta { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
+    .bubble {
+      padding: 14px 18px;
+      border-radius: var(--radius-lg);
+      font-size: 15px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    .message-row.user .bubble { background: var(--user-bubble); color: var(--user-bubble-text); border-bottom-right-radius: 4px; }
+    .message-row.ai .bubble { background: var(--ai-bubble); color: var(--text); border-bottom-left-radius: 4px; }
+    .message-row.ai .bubble.streaming::after { content: "▋"; display: inline-block; color: var(--accent); animation: blink 1s infinite; margin-left: 2px; }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+    .message-actions { display: flex; gap: 6px; margin-top: 6px; opacity: 0; transition: opacity .15s; }
+    .message-row:hover .message-actions { opacity: 1; }
+    .message-actions button { padding: 5px; border-radius: 6px; color: var(--text-muted); display: flex; align-items: center; justify-content: center; }
+    .message-actions button:hover { background: var(--surface-hover); color: var(--text); }
+    .message-actions button svg { width: 14px; height: 14px; }
+
+    /* Markdown */
+    .bubble h1, .bubble h2, .bubble h3 { margin: 16px 0 8px; font-weight: 600; }
+    .bubble p { margin-bottom: 12px; }
+    .bubble p:last-child { margin-bottom: 0; }
+    .bubble ul, .bubble ol { margin: 12px 0 12px 20px; }
+    .bubble li { margin-bottom: 4px; }
+    .bubble code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; background: rgba(255,255,255,0.08); padding: 2px 5px; border-radius: 4px; font-size: .9em; }
+    .bubble pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: var(--radius-md); margin: 12px 0; overflow: hidden; }
+    .bubble pre code { background: transparent; padding: 16px; display: block; overflow-x: auto; font-size: 13px; line-height: 1.5; }
+    .code-block-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: rgba(255,255,255,0.03); border-bottom: 1px solid var(--border); font-size: 12px; color: var(--text-muted); }
+    .code-block-header button { padding: 5px; border-radius: 6px; color: var(--text-muted); display: flex; align-items: center; justify-content: center; }
+    .code-block-header button:hover { background: var(--surface-active); color: var(--text); }
+    .code-block-header button svg { width: 14px; height: 14px; }
+    .bubble blockquote { border-left: 3px solid var(--accent); padding-left: 12px; margin: 12px 0; color: var(--text-secondary); }
+    .bubble table { border-collapse: collapse; margin: 12px 0; width: 100%; }
+    .bubble th, .bubble td { border: 1px solid var(--border); padding: 8px; text-align: left; }
+    .bubble th { background: var(--surface-hover); }
+    .bubble a { text-decoration: underline; }
+    .bubble a:hover { opacity: .8; }
+
+    /* Input area */
+    #input-wrapper {
+      position: fixed;
+      bottom: 0;
+      left: var(--sidebar-width);
+      right: 0;
+      padding: 12px 16% 24px;
+      background: linear-gradient(to top, var(--bg) 70%, transparent);
+      z-index: 100;
+      transition: left .25s ease;
+    }
+    #sidebar.hidden + #main #input-wrapper { left: 0; }
+    #input-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    #input-box:focus-within { border-color: var(--surface-active); }
+    #msg-input {
+      width: 100%;
+      min-height: 56px;
+      max-height: 200px;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--text);
+      font-size: 15px;
+      line-height: 1.5;
+      padding: 16px 16px 8px;
+      resize: none;
+      font-family: inherit;
+    }
+    #msg-input::placeholder { color: var(--text-muted); }
+    #input-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 10px 10px;
+    }
+    #input-toolbar-left { display: flex; gap: 6px; }
+    .tool-btn { width: 32px; height: 32px; border-radius: 8px; color: var(--text-muted); display: flex; align-items: center; justify-content: center; transition: all .15s; }
+    .tool-btn:hover { background: var(--surface-hover); color: var(--text); }
+    .tool-btn.active { background: var(--accent); color: #fff; }
+    .tool-btn svg { width: 16px; height: 16px; }
+    #send-btn { width: 32px; height: 32px; border-radius: 8px; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; }
+    #send-btn:hover { background: var(--accent-hover); }
+    #send-btn:disabled { opacity: .5; cursor: not-allowed; }
+    #send-btn svg { width: 16px; height: 16px; }
+    #input-hint { text-align: center; font-size: 11px; color: var(--text-muted); margin-top: 8px; }
+
+    /* Typing indicator */
+    #typing-row { display: none; padding: 8px 16%; }
+    #typing-row.active { display: flex; }
+    .typing-dots { display: flex; gap: 4px; padding: 12px 16px; background: var(--ai-bubble); border-radius: var(--radius-lg); border-bottom-left-radius: 4px; }
+    .typing-dots span { width: 7px; height: 7px; background: var(--text-muted); border-radius: 50%; animation: bounce 1.4s infinite ease-in-out both; }
+    .typing-dots span:nth-child(1) { animation-delay: -0.32s; }
+    .typing-dots span:nth-child(2) { animation-delay: -0.16s; }
+    @keyframes bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }
+
+    /* Toasts */
+    #toast-container { position: fixed; top: 16px; right: 16px; z-index: 3000; display: flex; flex-direction: column; gap: 8px; }
+    .toast { padding: 12px 16px; border-radius: var(--radius-md); background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow); font-size: 13px; color: var(--text); animation: slideIn .2s ease; }
+    .toast.error { border-color: var(--danger); }
+    .toast.success { border-color: var(--accent); }
+    @keyframes slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+    /* Modals */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 1500; display: none; align-items: center; justify-content: center; }
+    .modal-overlay.active { display: flex; }
+    .modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); width: 90%; max-width: 560px; max-height: 85vh; overflow: hidden; display: flex; flex-direction: column; box-shadow: var(--shadow); }
+    .modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+    .modal-header h2 { font-size: 16px; font-weight: 600; }
+    .modal-close { padding: 6px; border-radius: 6px; color: var(--text-muted); }
+    .modal-close:hover { background: var(--surface-hover); color: var(--text); }
+    .modal-body { padding: 20px; overflow-y: auto; flex: 1; }
+    .modal-footer { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px; }
+    .btn-primary { padding: 8px 16px; border-radius: var(--radius-sm); background: var(--accent); color: #fff; font-size: 13px; font-weight: 600; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-secondary { padding: 8px 16px; border-radius: var(--radius-sm); background: var(--surface-hover); color: var(--text); font-size: 13px; }
+    .btn-secondary:hover { background: var(--surface-active); }
+    .btn-danger { padding: 8px 16px; border-radius: var(--radius-sm); background: var(--danger); color: #fff; font-size: 13px; }
+
+    .form-row { margin-bottom: 16px; }
+    .form-row label { display: block; font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .5px; }
+    .form-row input, .form-row textarea, .form-row select {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      color: var(--text);
+      font-size: 14px;
+      font-family: inherit;
+      outline: none;
+    }
+    .form-row input:focus, .form-row textarea:focus, .form-row select:focus { border-color: var(--accent); }
+    .form-row textarea { min-height: 120px; resize: vertical; }
+
+    /* File manager / lists */
+    .list-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--bg); border: 1px solid var(--border); margin-bottom: 8px; }
+    .list-item:hover { border-color: var(--surface-active); }
+    .list-item .name { font-size: 14px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .list-item .meta { font-size: 11px; color: var(--text-muted); margin-right: 10px; }
+    .list-item .actions { display: flex; gap: 6px; }
+    .list-item .actions button { padding: 6px; border-radius: 6px; color: var(--text-muted); }
+    .list-item .actions button:hover { background: var(--surface-hover); color: var(--text); }
+    .empty-state { text-align: center; padding: 32px; color: var(--text-muted); font-size: 13px; }
+    .file-drop { border: 2px dashed var(--border); border-radius: var(--radius-md); padding: 32px; text-align: center; color: var(--text-muted); cursor: pointer; transition: all .15s; margin-bottom: 16px; }
+    .file-drop:hover, .file-drop.dragover { border-color: var(--accent); color: var(--text); background: rgba(16,163,127,0.05); }
+
+    /* Responsive */
+    @media (max-width: 900px) {
+      .message-row { padding: 16px 5%; }
+      #input-wrapper { padding: 12px 5% 24px; }
+      #menu-toggle { display: flex; }
+      #sidebar { position: fixed; z-index: 1200; height: 100vh; }
+      #input-wrapper { left: 0; }
+    }
+    @media (max-width: 600px) {
+      .capability-grid { grid-template-columns: 1fr; }
+      #chat-title { max-width: 150px; }
+    }
+  </style>
 </head>
 <body>
+  <div id="loading-overlay"><div class="loader"></div></div>
 
-<div id="auth-error">Wrong API key. Check Settings and try again.</div>
+  <div id="app">
+    <!-- Sidebar -->
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          EUNICE
+        </div>
+        <button class="new-chat-btn" id="new-chat-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          New chat
+        </button>
+      </div>
+      <div class="sidebar-section-title">Recent chats</div>
+      <div id="session-list"></div>
+      <div class="sidebar-footer">
+        <div class="user-card" id="user-card">
+          <div class="user-avatar" id="user-avatar">?</div>
+          <div class="user-info">
+            <div class="user-name" id="user-name">Not logged in</div>
+            <div class="user-meta" id="user-meta">Local mode</div>
+          </div>
+        </div>
+        <div class="sidebar-actions">
+          <button id="settings-btn" title="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> Settings</button>
+          <button id="files-btn" title="Files"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> Files</button>
+          <button id="logout-sidebar-btn" title="Log out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> Logout</button>
+        </div>
+      </div>
+    </aside>
 
-<!-- Sidebar -->
-<div id="sidebar-overlay"></div>
-<div id="sidebar">
-  <div id="sidebar-header">
-    <h2>CHATS</h2>
-    <button class="icon-btn" id="close-sidebar" style="width:28px;height:28px;">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-    </button>
+    <!-- Main -->
+    <main id="main">
+      <header id="top-bar">
+        <div id="top-bar-left">
+          <button id="menu-toggle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
+          <div id="chat-title">EUNICE</div>
+          <div id="model-badge">Loading...</div>
+        </div>
+        <div id="top-bar-right">
+          <button class="top-btn" id="docs-top-btn" title="Documents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></button>
+          <button class="top-btn" id="facts-top-btn" title="Memory"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></button>
+          <button class="top-btn" id="share-btn" title="Share chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></button>
+        </div>
+      </header>
+
+      <div id="chat-container">
+        <div id="welcome">
+          <h1>What can I help with?</h1>
+          <p>EUNICE runs locally, remembers your context, and can research, code, manage files, and more.</p>
+          <div class="capability-grid">
+            <div class="capability-card" data-prompt="Research the latest advancements in renewable energy and summarize with sources.">
+              <div class="icon">🔍</div>
+              <div class="title">Research</div>
+              <div class="desc">Search the web and get cited summaries</div>
+            </div>
+            <div class="capability-card" data-prompt="Write a Python script that fetches a webpage title using only standard library.">
+              <div class="icon">💻</div>
+              <div class="title">Code</div>
+              <div class="desc">Generate, edit, and run code safely</div>
+            </div>
+            <div class="capability-card" data-prompt="List my uploaded files and tell me what they contain.">
+              <div class="icon">📁</div>
+              <div class="title">Files</div>
+              <div class="desc">Upload, read, and manage your workspace</div>
+            </div>
+            <div class="capability-card" data-prompt="Upload a document and ask questions about it.">
+              <div class="icon">📄</div>
+              <div class="title">Documents</div>
+              <div class="desc">Upload PDFs/TXT/MD for RAG Q&A</div>
+            </div>
+            <div class="capability-card" data-prompt="Remember that my preferred meeting time is 10am.">
+              <div class="icon">🧠</div>
+              <div class="title">Memory</div>
+              <div class="desc">Store facts and recall them later</div>
+            </div>
+            <div class="capability-card" data-prompt="Scan my local network and summarize the devices found.">
+              <div class="icon">🌐</div>
+              <div class="title">Tools</div>
+              <div class="desc">Run notes, scans, balance checks, updates</div>
+            </div>
+          </div>
+        </div>
+
+        <div id="messages"></div>
+        <div id="typing-row">
+          <div class="typing-dots"><span></span><span></span><span></span></div>
+        </div>
+      </div>
+
+      <div id="input-wrapper">
+        <div id="input-box">
+          <textarea id="msg-input" rows="1" placeholder="Message EUNICE..."></textarea>
+          <div id="input-toolbar">
+            <div id="input-toolbar-left">
+              <button class="tool-btn" id="upload-btn" title="Upload file">📎</button>
+              <button class="tool-btn" id="doc-upload-btn" title="Upload document for RAG">📄</button>
+              <button class="tool-btn" id="research-btn" title="Research mode">🔍</button>
+              <button class="tool-btn" id="coder-btn" title="Code mode">💻</button>
+              <button class="tool-btn" id="mic-btn" title="Voice input">🎤</button>
+            </div>
+            <button id="send-btn" title="Send">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          </div>
+        </div>
+        <div id="input-hint">EUNICE can make mistakes. Verify important information.</div>
+      </div>
+    </main>
   </div>
-  <div id="new-chat-sidebar">
-    <button id="new-chat-btn-sidebar">+ New Chat</button>
-  </div>
-  <div id="session-list"></div>
-</div>
 
-<!-- Header -->
-<div id="header">
-  <div id="header-left">
-    <button class="icon-btn" id="menu-btn">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-    </button>
-    <h1>EUNICE</h1>
-  </div>
-  <div id="header-center">
-    <div id="current-session-title">New Chat</div>
-  </div>
-  <div style="display:flex;align-items:center;gap:8px;">
-    <div id="status">
-      <span id="status-dot"></span>
-      <span id="status-text">Offline</span>
-      <span id="version-badge"></span>
-    </div>
-    <button class="icon-btn" id="settings-btn" title="Settings">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.08 15a1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.08 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-    </button>
-  </div>
-</div>
+  <!-- Toast container -->
+  <div id="toast-container"></div>
 
-<!-- Chat -->
-<div id="chat-wrapper">
-  <div class="message ai new"><div class="label">EUNICE</div>I am online and listening. Speak or type to begin.</div>
-</div>
-<div id="typing">EUNICE is thinking...</div>
+  <!-- File inputs -->
+  <input type="file" id="file-input" style="display:none" />
+  <input type="file" id="doc-input" style="display:none" accept=".pdf,.txt,.md" />
 
-<!-- Input -->
-<div id="input-area">
-  <button class="btn" id="mic-btn" title="Hold to speak">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-  </button>
-  <textarea id="msg-input" rows="1" placeholder="Message EUNICE..."></textarea>
-  <button class="btn send" id="send-btn">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-  </button>
-</div>
-
-<!-- Login Modal -->
-<div id="login-overlay">
-  <div id="login-modal">
-    <h2>Welcome to EUNICE</h2>
-    <div id="login-tabs" style="display:flex;gap:8px;margin-bottom:14px;">
-      <button class="login-tab active" data-tab="create">Create Identity</button>
-      <button class="login-tab" data-tab="claim">Claim Identity</button>
-    </div>
-    <div id="login-error" style="display:none;color:var(--danger);font-size:12px;margin-bottom:10px;"></div>
-    <div class="modal-row">
-      <label>Display Name</label>
-      <input type="text" id="login-display-name" placeholder="Your name">
-    </div>
-    <div class="modal-row" id="login-identity-row" style="display:none;">
-      <label>Identity ID</label>
-      <input type="text" id="login-identity-id" placeholder="Paste identity ID">
-    </div>
-    <div class="modal-row">
-      <label>Passphrase</label>
-      <input type="password" id="login-passphrase" placeholder="Choose a passphrase">
-    </div>
-    <div class="modal-row">
-      <label>Device Name</label>
-      <input type="text" id="login-device-name" placeholder="e.g. Phone">
-    </div>
-    <div class="modal-row">
-      <label>API Key</label>
-      <input type="password" id="login-api-key" placeholder="Household API key">
-    </div>
-    <div class="modal-btns">
-      <button id="login-btn">Continue</button>
+  <!-- Login Modal -->
+  <div class="modal-overlay" id="login-overlay">
+    <div class="modal" style="max-width: 420px;">
+      <div class="modal-header">
+        <h2>Welcome to EUNICE</h2>
+      </div>
+      <div class="modal-body">
+        <div id="login-error" style="display:none;color:var(--danger);font-size:12px;margin-bottom:12px;padding:10px;background:rgba(239,68,68,0.1);border-radius:8px;"></div>
+        <div style="display:flex;gap:8px;margin-bottom:16px;">
+          <button class="login-tab active" data-tab="create" style="flex:1;padding:8px;border-radius:8px;background:var(--surface-active);color:var(--text);font-size:13px;">Create Identity</button>
+          <button class="login-tab" data-tab="claim" style="flex:1;padding:8px;border-radius:8px;background:var(--bg);color:var(--text-secondary);font-size:13px;">Claim Identity</button>
+        </div>
+        <div class="form-row">
+          <label>Display Name</label>
+          <input type="text" id="login-display-name" placeholder="Your name">
+        </div>
+        <div class="form-row" id="login-identity-row" style="display:none;">
+          <label>Identity ID</label>
+          <input type="text" id="login-identity-id" placeholder="Paste identity ID">
+        </div>
+        <div class="form-row">
+          <label>Passphrase</label>
+          <input type="password" id="login-passphrase" placeholder="Choose a passphrase">
+        </div>
+        <div class="form-row">
+          <label>Device Name</label>
+          <input type="text" id="login-device-name" placeholder="e.g. Phone">
+        </div>
+        <div class="form-row">
+          <label>API Key</label>
+          <input type="password" id="login-api-key" placeholder="Household API key">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="login-skip-btn">Skip (dev mode)</button>
+        <button class="btn-primary" id="login-btn">Continue</button>
+      </div>
     </div>
   </div>
-</div>
 
-<!-- Settings Modal -->
-<div id="overlay">
-  <div id="modal">
-    <h2>Settings</h2>
-    <div class="modal-row">
-      <label>API Key</label>
-      <input type="password" id="api-key-input" placeholder="Enter your API key..." autocomplete="off">
-    </div>
-    <div class="modal-row">
-      <label>Identity</label>
-      <div id="settings-identity" style="font-size:13px;color:var(--text-muted);">Not logged in</div>
-    </div>
-    <div class="modal-row toggle-row">
-      <label>Voice Output</label>
-      <div class="toggle" id="voice-toggle"></div>
-    </div>
-    <div class="modal-row">
-      <label>Voice Selection</label>
-      <select id="voice-select"><option value="">Default (Auto-pick female)</option></select>
-    </div>
-    <div class="modal-row">
-      <label>Speech Rate</label>
-      <select id="rate-select">
-        <option value="0.8">Slow</option>
-        <option value="1.0" selected>Normal</option>
-        <option value="1.2">Fast</option>
-        <option value="1.4">Very Fast</option>
-      </select>
-    </div>
-    <div class="modal-row">
-      <label>System Prompt (Personality)</label>
-      <textarea id="personality-box" placeholder="Loading..."></textarea>
-    </div>
-    <div class="modal-btns">
-      <button id="logout-btn" style="background:var(--danger);color:#fff;">Log Out</button>
-      <button id="cancel-btn">Close</button>
-      <button id="save-btn">Save & Apply</button>
+  <!-- Settings Modal -->
+  <div class="modal-overlay" id="settings-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Settings</h2>
+        <button class="modal-close" id="settings-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <label>API Key</label>
+          <input type="password" id="api-key-input" placeholder="Enter your API key..." autocomplete="off">
+        </div>
+        <div class="form-row">
+          <label>Identity</label>
+          <div id="settings-identity" style="font-size:13px;color:var(--text-muted);padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;">Not logged in</div>
+        </div>
+        <div class="form-row toggle-row" style="display:flex;align-items:center;justify-content:space-between;">
+          <label>Voice Output</label>
+          <div class="toggle" id="voice-toggle" style="width:44px;height:24px;border-radius:12px;background:#333;position:relative;cursor:pointer;transition:background .2s;"><div style="position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .2s;"></div></div>
+        </div>
+        <div class="form-row">
+          <label>Voice Selection</label>
+          <select id="voice-select"><option value="">Default (Auto-pick female)</option></select>
+        </div>
+        <div class="form-row">
+          <label>Speech Rate</label>
+          <select id="rate-select">
+            <option value="0.8">Slow</option>
+            <option value="1.0" selected>Normal</option>
+            <option value="1.2">Fast</option>
+            <option value="1.4">Very Fast</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>System Prompt (Personality)</label>
+          <textarea id="personality-box" placeholder="Loading..." rows="8"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-danger" id="logout-btn">Log Out</button>
+        <button class="btn-secondary" id="cancel-btn">Close</button>
+        <button class="btn-primary" id="save-btn">Save & Apply</button>
+      </div>
     </div>
   </div>
-</div>
 
-<script>
-const API_BASE = window.location.origin;
-const chatWrapper = document.getElementById('chat-wrapper');
-const input = document.getElementById('msg-input');
-const sendBtn = document.getElementById('send-btn');
-const micBtn = document.getElementById('mic-btn');
-const typing = document.getElementById('typing');
-const statusDot = document.getElementById('status-dot');
-const statusText = document.getElementById('status-text');
-const versionBadge = document.getElementById('version-badge');
-const sessionTitle = document.getElementById('current-session-title');
-const authError = document.getElementById('auth-error');
-const sidebar = document.getElementById('sidebar');
-const sidebarOverlay = document.getElementById('sidebar-overlay');
-const sessionList = document.getElementById('session-list');
+  <!-- File Manager Modal -->
+  <div class="modal-overlay" id="files-overlay">
+    <div class="modal" style="max-width: 640px;">
+      <div class="modal-header">
+        <h2>File Manager</h2>
+        <button class="modal-close" id="files-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="file-drop" id="file-drop">
+          <div style="font-size:24px;margin-bottom:8px;">📁</div>
+          <div>Drop files here or click to upload</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:6px;">Files are stored in your private sandbox</div>
+        </div>
+        <div id="file-list"><div class="empty-state">Loading files...</div></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="files-refresh-btn">Refresh</button>
+        <button class="btn-primary" id="files-close-btn">Done</button>
+      </div>
+    </div>
+  </div>
 
-let currentSession = null; // Start null, will create new chat on load
-let voiceEnabled = false;
-let selectedVoice = null;
-let speechRate = 1.0;
-let voices = [];
-let apiKey = localStorage.getItem('eunice_api_key') || '';
-let sessionToken = localStorage.getItem('eunice_session_token') || '';
-let identityId = localStorage.getItem('eunice_identity_id') || '';
-let deviceId = localStorage.getItem('eunice_device_id') || '';
-if (!deviceId) {
-  deviceId = 'dev-' + crypto.randomUUID();
-  localStorage.setItem('eunice_device_id', deviceId);
-}
-let isStreaming = false;
-let currentReader = null;
-let currentAiDiv = null;
+  <!-- Documents Modal -->
+  <div class="modal-overlay" id="docs-overlay">
+    <div class="modal" style="max-width: 640px;">
+      <div class="modal-header">
+        <h2>Documents for RAG</h2>
+        <button class="modal-close" id="docs-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="file-drop" id="doc-drop">
+          <div style="font-size:24px;margin-bottom:8px;">📄</div>
+          <div>Drop PDF, TXT, or MD files here or click to upload</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:6px;">Documents are chunked and indexed for Q&A</div>
+        </div>
+        <div id="doc-list"><div class="empty-state">Loading documents...</div></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="docs-refresh-btn">Refresh</button>
+        <button class="btn-primary" id="docs-close-btn">Done</button>
+      </div>
+    </div>
+  </div>
 
-// Track which sessions are processing (for polling when returning)
-const processingSessions = new Set();
+  <!-- Memory/Facts Modal -->
+  <div class="modal-overlay" id="facts-overlay">
+    <div class="modal" style="max-width: 640px;">
+      <div class="modal-header">
+        <h2>Memory</h2>
+        <button class="modal-close" id="facts-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="facts-list"><div class="empty-state">Loading memories...</div></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="facts-refresh-btn">Refresh</button>
+        <button class="btn-primary" id="facts-close-btn">Done</button>
+      </div>
+    </div>
+  </div>
 
-function getHeaders() {
-  const h = { 'Content-Type': 'application/json' };
-  if (sessionToken) {
-    h['Authorization'] = 'Bearer ' + sessionToken;
-  } else if (apiKey) {
-    h['Authorization'] = 'Bearer ' + apiKey;
-    if (deviceId) h['X-EUNICE-Device-ID'] = deviceId;
+  <!-- Research Modal -->
+  <div class="modal-overlay" id="research-overlay">
+    <div class="modal" style="max-width: 640px;">
+      <div class="modal-header">
+        <h2>Research</h2>
+        <button class="modal-close" id="research-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <label>Query</label>
+          <textarea id="research-query" rows="3" placeholder="What do you want to research?"></textarea>
+        </div>
+        <div id="research-result" style="display:none;">
+          <div class="form-row">
+            <label>Answer</label>
+            <div id="research-answer" style="padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:14px;line-height:1.6;white-space:pre-wrap;"></div>
+          </div>
+          <div class="form-row">
+            <label>Sources</label>
+            <div id="research-sources"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="research-close-btn">Close</button>
+        <button class="btn-primary" id="research-run-btn">Research</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Coder Modal -->
+  <div class="modal-overlay" id="coder-overlay">
+    <div class="modal" style="max-width: 720px;">
+      <div class="modal-header">
+        <h2>Coder</h2>
+        <button class="modal-close" id="coder-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <label>Request</label>
+          <textarea id="coder-request" rows="3" placeholder="Describe the code you want..."></textarea>
+        </div>
+        <div class="form-row">
+          <label>Filename</label>
+          <input type="text" id="coder-filename" value="generated.py" placeholder="generated.py">
+        </div>
+        <div class="form-row">
+          <label>Language</label>
+          <select id="coder-language">
+            <option value="python" selected>Python</option>
+            <option value="javascript">JavaScript</option>
+            <option value="bash">Bash</option>
+          </select>
+        </div>
+        <div id="coder-result" style="display:none;">
+          <div class="form-row">
+            <label>Generated Code</label>
+            <pre style="margin:0;"><code id="coder-code" style="display:block;padding:12px;background:var(--code-bg);border:1px solid var(--border);border-radius:8px;overflow-x:auto;font-size:13px;"></code></pre>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="coder-close-btn">Close</button>
+        <button class="btn-primary" id="coder-run-btn">Generate Code</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  const API_BASE = window.location.origin;
+  const chatContainer = document.getElementById('chat-container');
+  const messagesEl = document.getElementById('messages');
+  const welcomeEl = document.getElementById('welcome');
+  const input = document.getElementById('msg-input');
+  const sendBtn = document.getElementById('send-btn');
+  const micBtn = document.getElementById('mic-btn');
+  const typingRow = document.getElementById('typing-row');
+  const sessionList = document.getElementById('session-list');
+  const chatTitle = document.getElementById('chat-title');
+  const modelBadge = document.getElementById('model-badge');
+  const sidebar = document.getElementById('sidebar');
+  const menuToggle = document.getElementById('menu-toggle');
+
+  let currentSession = null;
+  let isStreaming = false;
+  let currentController = null;
+  let voices = [];
+  let voiceEnabled = false;
+  let selectedVoice = '';
+  let speechRate = 1.0;
+  let apiKey = localStorage.getItem('eunice_api_key') || '';
+  let sessionToken = localStorage.getItem('eunice_session_token') || '';
+  let identityId = localStorage.getItem('eunice_identity_id') || '';
+  let deviceId = localStorage.getItem('eunice_device_id') || '';
+  let displayName = localStorage.getItem('eunice_display_name') || '';
+  if (!deviceId) { deviceId = 'dev-' + crypto.randomUUID(); localStorage.setItem('eunice_device_id', deviceId); }
+
+  function getHeaders(contentType = 'application/json') {
+    const h = {};
+    if (contentType) h['Content-Type'] = contentType;
+    if (sessionToken) h['Authorization'] = 'Bearer ' + sessionToken;
+    else if (apiKey) {
+      h['Authorization'] = 'Bearer ' + apiKey;
+      if (deviceId) h['X-EUNICE-Device-ID'] = deviceId;
+    }
+    return h;
   }
-  return h;
-}
 
-// ─── Login / Identity ───
-const loginOverlay = document.getElementById('login-overlay');
-const loginTabs = document.querySelectorAll('.login-tab');
-const loginDisplayName = document.getElementById('login-display-name');
-const loginIdentityRow = document.getElementById('login-identity-row');
-const loginIdentityId = document.getElementById('login-identity-id');
-const loginPassphrase = document.getElementById('login-passphrase');
-const loginDeviceName = document.getElementById('login-device-name');
-const loginApiKey = document.getElementById('login-api-key');
-const loginBtn = document.getElementById('login-btn');
-const loginError = document.getElementById('login-error');
-let loginMode = 'create';
+  function showToast(message, type = 'info') {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = 'toast ' + type;
+    toast.textContent = message;
+    container.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+  }
 
-loginTabs.forEach(tab => {
-  tab.addEventListener('click', () => {
-    loginTabs.forEach(t => t.classList.remove('active'));
-    tab.classList.add('active');
-    loginMode = tab.dataset.tab;
-    loginIdentityRow.style.display = loginMode === 'claim' ? 'block' : 'none';
-    loginDisplayName.parentElement.style.display = loginMode === 'create' ? 'block' : 'none';
-    loginError.style.display = 'none';
-  });
-});
+  function escapeHtml(text) {
+    return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
 
-function showLogin() {
-  loginOverlay.classList.add('active');
-  loginApiKey.value = apiKey;
-  loginDeviceName.value = localStorage.getItem('eunice_device_name') || '';
-}
+  // Simple markdown parser
+  function renderMarkdown(text) {
+    // Code blocks
+    text = text.replace(/```(\w*)?\n([\s\S]*?)```/g, (match, lang, code) => {
+      lang = lang || 'text';
+      const escaped = escapeHtml(code.trimEnd());
+      const copyIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
+      return `<div class="code-block"><div class="code-block-header"><span>${lang}</span><button onclick="copyCode(this)" title="Copy code">${copyIcon}</button></div><pre><code class="language-${lang}">${escaped}</code></pre></div>`;
+    });
+    // Inline code
+    text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+    // Links
+    text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    text = text.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+    // Bold/italic
+    text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    text = text.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    text = text.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+    text = text.replace(/_([^_]+)_/g, '<em>$1</em>');
+    // Headers
+    text = text.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+    text = text.replace(/^## (.*$)/gim, '<h2>$1</h2>');
+    text = text.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+    // Lists
+    text = text.replace(/^\s*[-*+] (.*$)/gim, '<li>$1</li>');
+    text = text.replace(/(<li>.*<\/li>\n?)+/g, match => `<ul>${match}</ul>`);
+    // Blockquotes
+    text = text.replace(/^> (.*$)/gim, '<blockquote>$1</blockquote>');
+    // Paragraphs
+    const paragraphs = text.split(/\n\n+/).map(p => {
+      p = p.trim();
+      if (!p) return '';
+      if (p.startsWith('<') && (p.endsWith('>') || p.includes('</'))) return p;
+      return `<p>${p.replace(/\n/g, '<br>')}</p>`;
+    });
+    return paragraphs.join('');
+  }
 
-function hideLogin() {
-  loginOverlay.classList.remove('active');
-}
+  const COPY_ICON_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
+  const CHECK_ICON_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+  const SPEAKER_ICON_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>`;
 
-function saveSession(data) {
-  sessionToken = data.token;
-  identityId = data.identity_id;
-  localStorage.setItem('eunice_session_token', data.token);
-  localStorage.setItem('eunice_identity_id', data.identity_id);
-  localStorage.setItem('eunice_device_name', data.display_name || '');
-  hideLogin();
-  loadIdentity();
-  loadSessions();
-}
-
-async function doLogin() {
-  loginError.style.display = 'none';
-  apiKey = loginApiKey.value.trim();
-  localStorage.setItem('eunice_api_key', apiKey);
-
-  const payload = {
-    device_id: deviceId,
-    device_name: loginDeviceName.value.trim() || deviceId,
-    device_type: 'browser'
+  window.copyCode = function(btn) {
+    const code = btn.closest('.code-block').querySelector('code').textContent;
+    navigator.clipboard.writeText(code).then(() => {
+      btn.innerHTML = CHECK_ICON_SVG;
+      btn.title = 'Copied!';
+      setTimeout(() => { btn.innerHTML = COPY_ICON_SVG; btn.title = 'Copy code'; }, 1500);
+    });
   };
-  let url = '/identity/create';
-  if (loginMode === 'create') {
-    payload.display_name = loginDisplayName.value.trim();
-    payload.passphrase = loginPassphrase.value;
-    if (!payload.display_name || !payload.passphrase) {
-      loginError.textContent = 'Display name and passphrase are required.';
-      loginError.style.display = 'block';
-      return;
-    }
-  } else {
-    payload.identity_id = loginIdentityId.value.trim();
-    payload.passphrase = loginPassphrase.value;
-    if (!payload.identity_id || !payload.passphrase) {
-      loginError.textContent = 'Identity ID and passphrase are required.';
-      loginError.style.display = 'block';
-      return;
-    }
-    url = '/identity/claim';
-  }
 
-  try {
-    const resp = await fetch(API_BASE + url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
-      body: JSON.stringify(payload)
+  function copyMessage(btn) {
+    const bubble = btn.closest('.message-row').querySelector('.bubble');
+    navigator.clipboard.writeText(bubble.textContent).then(() => {
+      showToast('Copied to clipboard', 'success');
     });
-    const data = await resp.json();
-    if (!resp.ok) {
-      loginError.textContent = data.detail || 'Login failed.';
-      loginError.style.display = 'block';
-      return;
-    }
-    saveSession(data);
-  } catch (e) {
-    loginError.textContent = 'Network error. Is the server running?';
-    loginError.style.display = 'block';
   }
-}
 
-loginBtn.addEventListener('click', doLogin);
+  function appendMessage(text, role, { streaming = false, full = '' } = {}) {
+    welcomeEl.style.display = 'none';
+    messagesEl.classList.add('active');
 
-async function loadIdentity() {
-  try {
-    const resp = await fetch(API_BASE + '/identity/me', { headers: getHeaders() });
-    if (resp.ok) {
-      const data = await resp.json();
-      const identityLabel = document.getElementById('identity-label') || document.createElement('span');
-      identityLabel.id = 'identity-label';
-      identityLabel.textContent = data.display_name || data.identity_id;
-      identityLabel.style.cssText = 'font-size:11px;color:var(--text-muted);margin-left:8px;';
-      if (!document.getElementById('identity-label')) {
-        document.getElementById('header-left').appendChild(identityLabel);
-      }
+    const row = document.createElement('div');
+    row.className = 'message-row ' + role;
+    const content = document.createElement('div');
+    content.className = 'message-content';
+    const meta = document.createElement('div');
+    meta.className = 'message-meta';
+    meta.textContent = role === 'user' ? (displayName || 'You') : 'EUNICE';
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble' + (streaming ? ' streaming' : '');
+    bubble.dataset.raw = text;
+    bubble.innerHTML = role === 'ai' ? renderMarkdown(text) : escapeHtml(text);
+    if (streaming) bubble.id = 'streaming-bubble';
+
+    const actions = document.createElement('div');
+    actions.className = 'message-actions';
+    if (role === 'ai') {
+      actions.innerHTML = `<button onclick="copyMessage(this)" title="Copy message">${COPY_ICON_SVG}</button><button onclick="speakMessage(this)" title="Read aloud">${SPEAKER_ICON_SVG}</button>`;
     }
-  } catch(e) {}
-}
-
-async function logout() {
-  try {
-    await fetch(API_BASE + '/identity/logout', { method: 'POST', headers: getHeaders() });
-  } catch(e) {}
-  sessionToken = '';
-  identityId = '';
-  localStorage.removeItem('eunice_session_token');
-  localStorage.removeItem('eunice_identity_id');
-  showLogin();
-}
-
-function showAuthError(msg) {
-  authError.textContent = msg || 'Wrong API key. Check Settings and try again.';
-  authError.style.display = 'block';
-  setTimeout(() => { authError.style.display = 'none'; }, 4000);
-}
-
-// ─── Button State ───
-const SEND_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>';
-const PAUSE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
-
-function setStreamingState(streaming) {
-  isStreaming = streaming;
-  if (streaming) {
-    sendBtn.innerHTML = PAUSE_ICON;
-    sendBtn.classList.remove('send');
-    sendBtn.classList.add('pause');
-    sendBtn.disabled = false;
-    sendBtn.style.opacity = '1';
-  } else {
-    sendBtn.innerHTML = SEND_ICON;
-    sendBtn.classList.remove('pause');
-    sendBtn.classList.add('send');
-    sendBtn.disabled = false;
-    sendBtn.style.opacity = '1';
-    currentReader = null;
-    currentAiDiv = null;
+    content.appendChild(meta);
+    content.appendChild(bubble);
+    content.appendChild(actions);
+    row.appendChild(content);
+    messagesEl.appendChild(row);
+    scrollToBottom();
+    if (!streaming) applyHighlighting();
+    return bubble;
   }
-}
 
-// ─── Sidebar ───
-function openSidebar() {
-  sidebar.classList.add('open');
-  sidebarOverlay.classList.add('active');
-  loadSessions();
-}
-function closeSidebar() {
-  sidebar.classList.remove('open');
-  sidebarOverlay.classList.remove('active');
-}
+  function updateStreamingBubble(text) {
+    const bubble = document.getElementById('streaming-bubble');
+    if (!bubble) return;
+    bubble.dataset.raw = text;
+    bubble.innerHTML = renderMarkdown(text);
+    applyHighlighting();
+    scrollToBottom();
+  }
 
-document.getElementById('menu-btn').addEventListener('click', openSidebar);
-document.getElementById('close-sidebar').addEventListener('click', closeSidebar);
-sidebarOverlay.addEventListener('click', closeSidebar);
+  function finalizeStreamingBubble() {
+    const bubble = document.getElementById('streaming-bubble');
+    if (!bubble) return;
+    bubble.classList.remove('streaming');
+    bubble.removeAttribute('id');
+  }
 
-async function loadSessions() {
-  try {
-    const resp = await fetch(API_BASE + '/sessions', { headers: getHeaders() });
-    if (!resp.ok) return;
-    const data = await resp.json();
-    sessionList.innerHTML = '';
-    if (!data.sessions || data.sessions.length === 0) {
-      sessionList.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:12px;">No chats yet</div>';
-      return;
+  function applyHighlighting() {
+    if (window.hljs) {
+      document.querySelectorAll('pre code').forEach(block => hljs.highlightElement(block));
     }
-    data.sessions.forEach(s => {
-      const div = document.createElement('div');
-      div.className = 'session-item';
-      if (s.id === currentSession) div.classList.add('active');
-      const dateStr = s.last_active ? new Date(s.last_active).toLocaleDateString() : '';
-      // Show processing indicator if this session is still working
-      const processing = processingSessions.has(s.id) ? ' ●' : '';
-      div.innerHTML = `
-        <span class="s-title">${escapeHtml(s.title || s.id)}${processing}</span>
-        <span class="s-date">${dateStr}</span>
-        <button class="session-delete" title="Delete chat">×</button>
-      `;
-      div.querySelector('.session-delete').onclick = (e) => {
-        e.stopPropagation();
-        deleteSession(s.id);
-      };
-      div.onclick = () => switchSession(s.id, s.title);
-      sessionList.appendChild(div);
-    });
-  } catch(e) {}
-}
+  }
 
-async function deleteSession(sessionId) {
-  if (!confirm('Delete this chat?')) return;
-  try {
-    await fetch(API_BASE + '/sessions/' + encodeURIComponent(sessionId), {
-      method: 'DELETE',
-      headers: getHeaders()
-    });
-    processingSessions.delete(sessionId);
-    if (sessionId === currentSession) {
-      createNewChat();
-    } else {
-      loadSessions();
+  function scrollToBottom() {
+    chatContainer.scrollTo({ top: chatContainer.scrollHeight, behavior: 'smooth' });
+  }
+
+  window.speakMessage = function(btn) {
+    if (!window.speechSynthesis) return;
+    const text = btn.closest('.message-row').querySelector('.bubble').textContent;
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.rate = speechRate;
+    if (selectedVoice) utter.voice = voices.find(v => v.name === selectedVoice);
+    else {
+      const preferred = voices.find(v => v.name.toLowerCase().includes('female') || v.name.toLowerCase().includes('samantha') || v.name.toLowerCase().includes('zira'));
+      if (preferred) utter.voice = preferred;
     }
-  } catch(e) {}
-}
+    window.speechSynthesis.speak(utter);
+  };
 
-async function switchSession(sessionId, title) {
-  // Cancel current stream if any
-  if (currentReader) {
-    currentReader.cancel();
-    currentReader = null;
-  }
-  if (currentAiDiv) {
-    currentAiDiv.classList.remove('streaming');
-  }
-  setStreamingState(false);
-
-  currentSession = sessionId;
-  sessionTitle.textContent = title || sessionId;
-  localStorage.setItem('eunice_last_session', sessionId);
-  localStorage.setItem('eunice_last_session_title', title || sessionId);
-  chatWrapper.innerHTML = '';
-
-  // Load history
-  await loadSessionHistory(sessionId);
-  closeSidebar();
-}
-
-async function loadSessionHistory(sessionId) {
-  try {
-    const resp = await fetch(API_BASE + '/history/' + encodeURIComponent(sessionId), { headers: getHeaders() });
-    if (resp.ok) {
-      const data = await resp.json();
-      if (data.messages && data.messages.length > 0) {
-        data.messages.forEach(m => {
-          appendMessage(m.content, m.role === 'user' ? 'user' : 'ai', false);
-        });
-
-        // Check if last message is from user — EUNICE might still be processing
-        const lastMsg = data.messages[data.messages.length - 1];
-        if (lastMsg.role === 'user') {
-          // Start polling for completion
-          showTyping();
-          pollForResponse(sessionId);
-        }
-      } else {
-        appendMessage("New chat started. I still remember everything about you.", "ai", false);
-      }
-    } else {
-      appendMessage("New chat started. I still remember everything about you.", "ai", false);
-    }
-  } catch(e) {
-    appendMessage("New chat started. I still remember everything about you.", "ai", false);
-  }
-}
-
-function showTyping() {
-  typing.style.display = 'block';
-  chatWrapper.scrollTop = chatWrapper.scrollHeight;
-}
-
-function hideTyping() {
-  typing.style.display = 'none';
-}
-
-async function pollForResponse(sessionId) {
-  // Poll every 2 seconds until assistant responds
-  const maxAttempts = 60; // 2 minutes max
-  let attempts = 0;
-
-  const poll = async () => {
-    if (sessionId !== currentSession) return; // User switched away
-    attempts++;
-
+  // ─── Sessions ───
+  async function loadSessions() {
     try {
-      const resp = await fetch(API_BASE + '/history/' + encodeURIComponent(sessionId), { headers: getHeaders() });
+      const resp = await fetch(`${API_BASE}/sessions`, { headers: getHeaders() });
       if (!resp.ok) return;
       const data = await resp.json();
+      renderSessions(data.sessions || []);
+    } catch (e) { console.error('loadSessions', e); }
+  }
 
-      if (data.messages && data.messages.length > 0) {
-        const lastMsg = data.messages[data.messages.length - 1];
-
-        if (lastMsg.role === 'assistant') {
-          // Response arrived! Clear and re-render
-          hideTyping();
-          processingSessions.delete(sessionId);
-          chatWrapper.innerHTML = '';
-          data.messages.forEach(m => {
-            appendMessage(m.content, m.role === 'user' ? 'user' : 'ai', false);
-          });
-          return;
-        }
-      }
-
-      if (attempts < maxAttempts) {
-        setTimeout(poll, 2000);
-      } else {
-        hideTyping();
-        processingSessions.delete(sessionId);
-        appendMessage("[Response timed out. Try again.]", "ai", false);
-      }
-    } catch(e) {
-      if (attempts < maxAttempts) {
-        setTimeout(poll, 2000);
-      }
+  function renderSessions(sessions) {
+    sessionList.innerHTML = '';
+    if (!sessions.length) {
+      sessionList.innerHTML = '<div class="empty-state">No chats yet</div>';
+      return;
     }
-  };
-
-  processingSessions.add(sessionId);
-  poll();
-}
-
-function createNewChat() {
-  if (currentReader) {
-    currentReader.cancel();
-    currentReader = null;
-  }
-  if (currentAiDiv) {
-    currentAiDiv.classList.remove('streaming');
-  }
-  setStreamingState(false);
-
-  const ts = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
-  const newId = 'chat-' + ts;
-  currentSession = newId;
-  sessionTitle.textContent = 'New Chat';
-  localStorage.setItem('eunice_last_session', currentSession);
-  localStorage.setItem('eunice_last_session_title', 'New Chat');
-  chatWrapper.innerHTML = '';
-  appendMessage("New chat started. I still remember everything about you.", "ai", false);
-  closeSidebar();
-}
-
-document.getElementById('new-chat-btn-sidebar').addEventListener('click', createNewChat);
-
-// ─── Voice ───
-function loadVoices() {
-  voices = window.speechSynthesis.getVoices();
-  const select = document.getElementById('voice-select');
-  select.innerHTML = '<option value="">Default (Auto-pick female)</option>';
-  voices.forEach((v, i) => {
-    const opt = document.createElement('option');
-    opt.value = i;
-    opt.textContent = v.name + (v.lang ? ' (' + v.lang + ')' : '');
-    select.appendChild(opt);
-  });
-  if (!selectedVoice) {
-    const female = voices.findIndex(v => /female|samantha|victoria|karen|zira|laura|sarah/i.test(v.name));
-    if (female >= 0) { select.value = female; selectedVoice = voices[female]; }
-  }
-}
-if (window.speechSynthesis) {
-  window.speechSynthesis.onvoiceschanged = loadVoices;
-  loadVoices();
-}
-
-function speak(text) {
-  if (!voiceEnabled || !window.speechSynthesis) return;
-  window.speechSynthesis.cancel();
-  const chunks = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [text];
-  let i = 0;
-  function next() {
-    if (i >= chunks.length) return;
-    const u = new SpeechSynthesisUtterance(chunks[i].trim());
-    u.rate = speechRate;
-    u.pitch = 1.05;
-    if (selectedVoice) u.voice = selectedVoice;
-    u.onend = () => { i++; next(); };
-    window.speechSynthesis.speak(u);
-  }
-  next();
-}
-
-// ─── Messages ───
-function appendMessage(text, sender, animate = true) {
-  const div = document.createElement('div');
-  div.className = 'message ' + sender;
-  if (animate && sender === 'ai') div.classList.add('new');
-  if (sender === 'ai') {
-    div.innerHTML = '<div class="label">EUNICE</div><span class="content">' + escapeHtml(text) + '</span>';
-  } else {
-    div.textContent = text;
-  }
-  chatWrapper.appendChild(div);
-  chatWrapper.scrollTop = chatWrapper.scrollHeight;
-  return div;
-}
-
-function escapeHtml(t) {
-  const d = document.createElement('div');
-  d.textContent = t;
-  return d.innerHTML.replace(/\n/g, '<br>');
-}
-
-// ─── Pause Stream ───
-function pauseStream() {
-  if (currentReader) {
-    currentReader.cancel();
-    currentReader = null;
-  }
-  if (currentAiDiv) {
-    currentAiDiv.classList.remove('streaming');
-    const contentSpan = currentAiDiv.querySelector('.content');
-    if (contentSpan) {
-      contentSpan.innerHTML += '<br><em style="color:var(--text-muted);font-size:12px;">[Paused by user]</em>';
-    }
-  }
-  processingSessions.delete(currentSession);
-  setStreamingState(false);
-}
-
-// ─── Streaming Chat ───
-async function sendMessage() {
-  const text = input.value.trim();
-  if (!text || isStreaming) return;
-  input.value = '';
-  input.rows = 1;
-  appendMessage(text, 'user');
-  showTyping();
-  setStreamingState(true);
-
-  try {
-    const resp = await fetch(API_BASE + '/chat/stream', {
-      method: 'POST',
-      headers: getHeaders(),
-      body: JSON.stringify({ message: text, session: currentSession, device_id: deviceId })
+    sessions.forEach(s => {
+      const item = document.createElement('div');
+      item.className = 'session-item' + (s.id === currentSession ? ' active' : '');
+      item.dataset.id = s.id;
+      item.innerHTML = `<span class="title">${escapeHtml(s.title || s.id)}</span>
+        <div class="actions">
+          <button class="session-rename" title="Rename">✏️</button>
+          <button class="session-delete" title="Delete">🗑️</button>
+        </div>`;
+      item.querySelector('.title').addEventListener('click', () => switchSession(s.id));
+      item.querySelector('.session-rename').addEventListener('click', e => { e.stopPropagation(); startRenameSession(item, s.id); });
+      item.querySelector('.session-delete').addEventListener('click', e => { e.stopPropagation(); deleteSession(s.id); });
+      sessionList.appendChild(item);
     });
+  }
 
-    if (resp.status === 401) {
-      hideTyping();
-      showAuthError('Wrong API key. Check Settings and try again.');
-      setStreamingState(false);
-      return;
-    }
+  async function createNewChat() {
+    currentSession = 'session-' + Date.now();
+    localStorage.setItem('eunice_current_session', currentSession);
+    messagesEl.innerHTML = '';
+    welcomeEl.style.display = 'flex';
+    messagesEl.classList.remove('active');
+    chatTitle.textContent = 'New chat';
+    await loadSessions();
+    if (window.innerWidth <= 900) sidebar.classList.add('hidden');
+  }
 
-    if (!resp.ok) {
-      hideTyping();
-      appendMessage("[Server error. Check EUNICE logs.]", 'ai');
-      setStreamingState(false);
-      return;
-    }
+  async function switchSession(id) {
+    currentSession = id;
+    localStorage.setItem('eunice_current_session', currentSession);
+    messagesEl.innerHTML = '';
+    welcomeEl.style.display = 'none';
+    messagesEl.classList.add('active');
+    await loadHistory(id);
+    await loadSessions();
+    if (window.innerWidth <= 900) sidebar.classList.add('hidden');
+  }
 
-    hideTyping();
-    currentAiDiv = appendMessage("", 'ai');
-    currentAiDiv.classList.add('streaming');
-    const contentSpan = currentAiDiv.querySelector('.content');
-    let fullText = "";
+  async function loadHistory(session) {
+    try {
+      const resp = await fetch(`${API_BASE}/history/${encodeURIComponent(session)}`, { headers: getHeaders() });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      chatTitle.textContent = data.title || session;
+      (data.messages || []).forEach(m => appendMessage(m.content, m.role));
+    } catch (e) { console.error('loadHistory', e); }
+  }
 
-    currentReader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
+  async function deleteSession(id) {
+    if (!confirm('Delete this chat?')) return;
+    try {
+      await fetch(`${API_BASE}/sessions/${encodeURIComponent(id)}`, { method: 'DELETE', headers: getHeaders('') });
+      if (id === currentSession) await createNewChat();
+      else await loadSessions();
+    } catch (e) { showToast('Failed to delete chat', 'error'); }
+  }
 
-    while (true) {
-      const { done, value } = await currentReader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop();
-
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        const jsonStr = line.slice(6).trim();
-        if (!jsonStr) continue;
-        try {
-          const data = JSON.parse(jsonStr);
-          if (data.error) {
-            contentSpan.innerHTML = escapeHtml("[Error: " + data.error + "]");
-            currentAiDiv.classList.remove('streaming');
-            processingSessions.delete(currentSession);
-            setStreamingState(false);
-            return;
-          }
-          if (data.token) {
-            fullText += data.token;
-            contentSpan.innerHTML = escapeHtml(fullText);
-            chatWrapper.scrollTop = chatWrapper.scrollHeight;
-          }
-          if (data.done) {
-            currentAiDiv.classList.remove('streaming');
-            processingSessions.delete(currentSession);
-            setStreamingState(false);
-            speak(fullText);
-            return;
-          }
-        } catch (e) {}
+  function startRenameSession(item, id) {
+    const titleEl = item.querySelector('.title');
+    const current = titleEl.textContent;
+    item.classList.add('editing');
+    item.innerHTML = `<input type="text" value="${escapeHtml(current)}">`;
+    const input = item.querySelector('input');
+    input.focus();
+    input.select();
+    async function save() {
+      const name = input.value.trim();
+      if (name) {
+        await fetch(`${API_BASE}/sessions/${encodeURIComponent(id)}`, { method: 'PUT', headers: getHeaders(), body: JSON.stringify({ name }) });
+        if (id === currentSession) chatTitle.textContent = name;
       }
+      await loadSessions();
     }
-    currentAiDiv.classList.remove('streaming');
-    processingSessions.delete(currentSession);
-    setStreamingState(false);
-    speak(fullText);
-
-  } catch (err) {
-    hideTyping();
-    appendMessage("[Connection lost. Is EUNICE's server running?]", 'ai');
-    processingSessions.delete(currentSession);
-    setStreamingState(false);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') loadSessions(); });
+    input.addEventListener('blur', save);
   }
-}
 
-sendBtn.addEventListener('click', () => {
-  if (isStreaming) {
-    pauseStream();
-  } else {
-    sendMessage();
-  }
-});
-
-input.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-});
-input.addEventListener('input', () => {
-  input.rows = Math.min(5, Math.max(1, input.value.split('\n').length));
-});
-
-// ─── Mic ───
-let recognition = null;
-if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  recognition = new SR();
-  recognition.continuous = false;
-  recognition.interimResults = false;
-  recognition.lang = 'en-US';
-  recognition.onresult = e => {
-    const transcript = e.results[0][0].transcript;
-    micBtn.classList.remove('recording');
-    input.value = transcript;
-    appendMessage(transcript, 'user');
+  // ─── Streaming Chat ───
+  async function sendMessage() {
+    const text = input.value.trim();
+    if (!text || isStreaming) return;
     input.value = '';
     input.rows = 1;
-    sendMessage();
-  };
-  recognition.onerror = () => micBtn.classList.remove('recording');
-  recognition.onend = () => micBtn.classList.remove('recording');
-} else { micBtn.style.display = 'none'; }
+    appendMessage(text, 'user');
+    isStreaming = true;
+    sendBtn.disabled = true;
+    typingRow.classList.add('active');
+    welcomeEl.style.display = 'none';
+    messagesEl.classList.add('active');
 
-micBtn.addEventListener('mousedown', () => { if(recognition && !isStreaming){ micBtn.classList.add('recording'); recognition.start(); }});
-micBtn.addEventListener('mouseup', () => { if(recognition){ recognition.stop(); }});
+    if (!currentSession) currentSession = 'session-' + Date.now();
+    localStorage.setItem('eunice_current_session', currentSession);
 
-// ─── Settings ───
-const overlay = document.getElementById('overlay');
-const voiceToggle = document.getElementById('voice-toggle');
-const voiceSelect = document.getElementById('voice-select');
-const rateSelect = document.getElementById('rate-select');
-const personalityBox = document.getElementById('personality-box');
-const apiKeyInput = document.getElementById('api-key-input');
+    try {
+      const resp = await fetch(`${API_BASE}/chat/stream`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ message: text, session: currentSession })
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${resp.status}`);
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let full = '';
+      let bubbleCreated = false;
+      typingRow.classList.remove('active');
 
-voiceToggle.addEventListener('click', () => {
-  voiceToggle.classList.toggle('on');
-  voiceEnabled = voiceToggle.classList.contains('on');
-});
-voiceSelect.addEventListener('change', () => {
-  selectedVoice = voices[parseInt(voiceSelect.value)] || null;
-});
-rateSelect.addEventListener('change', () => {
-  speechRate = parseFloat(rateSelect.value);
-});
-
-document.getElementById('settings-btn').addEventListener('click', async () => {
-  overlay.classList.add('active');
-  apiKeyInput.value = apiKey;
-  document.getElementById('settings-identity').textContent = identityId
-    ? (localStorage.getItem('eunice_device_name') || identityId)
-    : 'Not logged in (API key only)';
-  if (voiceEnabled) voiceToggle.classList.add('on');
-  else voiceToggle.classList.remove('on');
-  try {
-    const resp = await fetch(API_BASE + '/personality', { headers: getHeaders() });
-    if (resp.ok) {
-      const data = await resp.json();
-      personalityBox.value = data.personality;
-    } else if (resp.status === 401) {
-      personalityBox.value = "[Authentication failed — check API key]";
-      showAuthError('Wrong API key. Check Settings and try again.');
-    } else {
-      personalityBox.value = "[Could not load personality]";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n\n');
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.error) {
+              if (!bubbleCreated) { appendMessage(data.error, 'ai'); bubbleCreated = true; }
+              else updateStreamingBubble(data.error);
+              finalizeStreamingBubble();
+              break;
+            }
+            if (data.token !== undefined) {
+              if (!bubbleCreated) { appendMessage(data.token, 'ai', { streaming: true }); bubbleCreated = true; }
+              else {
+                full += data.token;
+                updateStreamingBubble(full);
+              }
+            }
+            if (data.done) {
+              if (bubbleCreated) finalizeStreamingBubble();
+              else if (data.full) appendMessage(data.full, 'ai');
+              full = data.full || full;
+            }
+          } catch (e) { console.error('parse error', e); }
+        }
+      }
+      await loadSessions();
+    } catch (e) {
+      typingRow.classList.remove('active');
+      appendMessage(`Error: ${e.message}`, 'ai');
+      showToast(e.message, 'error');
+    } finally {
+      isStreaming = false;
+      sendBtn.disabled = false;
+      typingRow.classList.remove('active');
+      finalizeStreamingBubble();
+      if (voiceEnabled) {
+        const lastAi = messagesEl.querySelectorAll('.message-row.ai .bubble');
+        if (lastAi.length) speakMessage(lastAi[lastAi.length - 1].closest('.message-row').querySelector('.message-actions button:last-child'));
+      }
     }
-  } catch(e) { personalityBox.value = "[Could not connect to server]"; }
-});
+  }
 
-document.getElementById('cancel-btn').addEventListener('click', () => overlay.classList.remove('active'));
+  sendBtn.addEventListener('click', sendMessage);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+  input.addEventListener('input', () => { input.rows = Math.min(6, Math.max(1, input.value.split('\n').length)); });
 
-document.getElementById('logout-btn').addEventListener('click', () => {
-  overlay.classList.remove('active');
-  logout();
-});
-
-document.getElementById('save-btn').addEventListener('click', async () => {
-  apiKey = apiKeyInput.value.trim();
-  localStorage.setItem('eunice_api_key', apiKey);
-  try {
-    const resp = await fetch(API_BASE + '/personality', {
-      method: 'POST',
-      headers: getHeaders(),
-      body: JSON.stringify({ personality: personalityBox.value })
+  // ─── Capability cards ───
+  document.querySelectorAll('.capability-card').forEach(card => {
+    card.addEventListener('click', () => {
+      input.value = card.dataset.prompt;
+      input.focus();
     });
-    if (resp.ok) {
-      overlay.classList.remove('active');
-      appendMessage("[Settings saved. Personality updated.]", "ai", false);
-    } else if (resp.status === 401) {
-      showAuthError('Wrong API key. Check Settings and try again.');
-    } else {
-      alert("Failed to save settings.");
-    }
-  } catch(e) { alert("Failed to save settings. Server unreachable."); }
-});
+  });
 
-overlay.addEventListener('click', e => { if(e.target === overlay) overlay.classList.remove('active'); });
+  // ─── Uploads ───
+  const fileInput = document.getElementById('file-input');
+  const docInput = document.getElementById('doc-input');
 
-// ─── Health Check ───
-async function checkHealth() {
-  try {
-    const resp = await fetch(API_BASE + '/health', { method: 'GET' });
-    if (resp.ok) {
-      const data = await resp.json();
-      statusDot.classList.add('online');
-      statusText.textContent = 'Online';
-      if (data.version) versionBadge.textContent = 'v' + data.version;
-    } else throw new Error();
-  } catch {
-    statusDot.classList.remove('online');
-    statusText.textContent = 'Offline';
-    versionBadge.textContent = '';
+  document.getElementById('upload-btn').addEventListener('click', () => fileInput.click());
+  document.getElementById('doc-upload-btn').addEventListener('click', () => docInput.click());
+
+  async function uploadFile(file, endpoint, extra = {}) {
+    const formData = new FormData();
+    formData.append('file', file);
+    for (const [k, v] of Object.entries(extra)) formData.append(k, v);
+    const headers = getHeaders(null);
+    const resp = await fetch(`${API_BASE}${endpoint}`, { method: 'POST', headers, body: formData });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || 'Upload failed');
+    return data;
   }
-}
-checkHealth();
-setInterval(checkHealth, 5000);
 
-// ─── Initialize: Restore last session or create new ───
-const lastSession = localStorage.getItem('eunice_last_session');
-const lastSessionTitle = localStorage.getItem('eunice_last_session_title');
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    fileInput.value = '';
+    try {
+      const data = await uploadFile(file, '/files/upload');
+      const path = data.result?.path || file.name;
+      input.value = `I uploaded ${path}.`;
+      showToast('File uploaded', 'success');
+      sendMessage();
+    } catch (e) { showToast(e.message, 'error'); }
+  });
 
-async function initApp() {
-  // If we have a session token, try to use it; otherwise show login.
-  if (sessionToken) {
-    const resp = await fetch(API_BASE + '/identity/me', { headers: getHeaders() });
-    if (resp.ok) {
+  docInput.addEventListener('change', async () => {
+    const file = docInput.files[0];
+    if (!file) return;
+    docInput.value = '';
+    try {
+      await uploadFile(file, '/docs/upload', { filename: file.name });
+      showToast('Document indexed for RAG', 'success');
+      input.value = `I uploaded ${file.name}. Ask me questions about it.`;
+    } catch (e) { showToast(e.message, 'error'); }
+  });
+
+  // ─── Modals ───
+  function openModal(id) { document.getElementById(id).classList.add('active'); }
+  function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+
+  document.getElementById('settings-btn').addEventListener('click', () => openModal('settings-overlay'));
+  document.getElementById('settings-close').addEventListener('click', () => closeModal('settings-overlay'));
+  document.getElementById('cancel-btn').addEventListener('click', () => closeModal('settings-overlay'));
+  document.getElementById('files-btn').addEventListener('click', () => { openModal('files-overlay'); loadFiles(); });
+  document.getElementById('files-close').addEventListener('click', () => closeModal('files-overlay'));
+  document.getElementById('files-close-btn').addEventListener('click', () => closeModal('files-overlay'));
+  document.getElementById('files-refresh-btn').addEventListener('click', loadFiles);
+  document.getElementById('docs-top-btn').addEventListener('click', () => { openModal('docs-overlay'); loadDocs(); });
+  document.getElementById('docs-close').addEventListener('click', () => closeModal('docs-overlay'));
+  document.getElementById('docs-close-btn').addEventListener('click', () => closeModal('docs-overlay'));
+  document.getElementById('docs-refresh-btn').addEventListener('click', loadDocs);
+  document.getElementById('facts-top-btn').addEventListener('click', () => { openModal('facts-overlay'); loadFacts(); });
+  document.getElementById('facts-close').addEventListener('click', () => closeModal('facts-overlay'));
+  document.getElementById('facts-close-btn').addEventListener('click', () => closeModal('facts-overlay'));
+  document.getElementById('facts-refresh-btn').addEventListener('click', loadFacts);
+  document.getElementById('research-btn').addEventListener('click', () => openModal('research-overlay'));
+  document.getElementById('research-close').addEventListener('click', () => closeModal('research-overlay'));
+  document.getElementById('research-close-btn').addEventListener('click', () => closeModal('research-overlay'));
+  document.getElementById('coder-btn').addEventListener('click', () => openModal('coder-overlay'));
+  document.getElementById('coder-close').addEventListener('click', () => closeModal('coder-overlay'));
+  document.getElementById('coder-close-btn').addEventListener('click', () => closeModal('coder-overlay'));
+
+  menuToggle.addEventListener('click', () => sidebar.classList.toggle('hidden'));
+  document.getElementById('new-chat-btn').addEventListener('click', createNewChat);
+
+  // ─── File Manager ───
+  async function loadFiles() {
+    const list = document.getElementById('file-list');
+    list.innerHTML = '<div class="empty-state">Loading files...</div>';
+    try {
+      const resp = await fetch(`${API_BASE}/files`, { headers: getHeaders('') });
       const data = await resp.json();
+      renderFileList(list, data.entries || [], 'file');
+    } catch (e) { list.innerHTML = '<div class="empty-state">Failed to load files</div>'; }
+  }
+
+  async function loadDocs() {
+    const list = document.getElementById('doc-list');
+    list.innerHTML = '<div class="empty-state">Loading documents...</div>';
+    try {
+      const resp = await fetch(`${API_BASE}/docs`, { headers: getHeaders('') });
+      const data = await resp.json();
+      renderDocList(list, data.documents || []);
+    } catch (e) { list.innerHTML = '<div class="empty-state">Failed to load documents</div>'; }
+  }
+
+  function renderFileList(container, entries, type) {
+    container.innerHTML = '';
+    if (!entries.length) { container.innerHTML = '<div class="empty-state">No files yet</div>'; return; }
+    entries.forEach(e => {
+      const item = document.createElement('div');
+      item.className = 'list-item';
+      const size = e.size ? formatBytes(e.size) : (e.type === 'directory' ? 'folder' : '');
+      item.innerHTML = `<span class="name">${escapeHtml(e.name)}</span><span class="meta">${size}</span>
+        <div class="actions">
+          ${e.type === 'file' ? '<button class="file-read" title="Read">👁️</button>' : ''}
+          <button class="file-delete" title="Delete">🗑️</button>
+        </div>`;
+      if (e.type === 'file') item.querySelector('.file-read').addEventListener('click', () => readFile(e.path));
+      item.querySelector('.file-delete').addEventListener('click', () => deleteFile(e.path));
+      container.appendChild(item);
+    });
+  }
+
+  function renderDocList(container, docs) {
+    container.innerHTML = '';
+    if (!docs.length) { container.innerHTML = '<div class="empty-state">No documents indexed</div>'; return; }
+    docs.forEach(d => {
+      const item = document.createElement('div');
+      item.className = 'list-item';
+      item.innerHTML = `<span class="name">${escapeHtml(d.filename || d.doc_hash || 'Unknown')}</span><span class="meta">${d.chunk_count || 0} chunks</span>
+        <div class="actions"><button class="doc-delete" title="Delete">🗑️</button></div>`;
+      item.querySelector('.doc-delete').addEventListener('click', () => deleteDoc(d.doc_hash));
+      container.appendChild(item);
+    });
+  }
+
+  async function readFile(path) {
+    try {
+      const resp = await fetch(`${API_BASE}/files/read?path=${encodeURIComponent(path)}`, { headers: getHeaders('') });
+      const data = await resp.json();
+      input.value = `Here's the content of ${path}:\n\n${data.content.slice(0, 2000)}${data.content.length > 2000 ? '\n\n[truncated]' : ''}`;
+      closeModal('files-overlay');
+      input.focus();
+    } catch (e) { showToast(e.message, 'error'); }
+  }
+
+  async function deleteFile(path) {
+    if (!confirm(`Delete ${path}?`)) return;
+    try {
+      await fetch(`${API_BASE}/files?path=${encodeURIComponent(path)}`, { method: 'DELETE', headers: getHeaders('') });
+      loadFiles();
+    } catch (e) { showToast(e.message, 'error'); }
+  }
+
+  async function deleteDoc(hash) {
+    if (!confirm('Delete this document?')) return;
+    // Document delete endpoint not implemented; skip
+    showToast('Document delete not yet implemented', 'error');
+  }
+
+  function formatBytes(b) { if (b < 1024) return b + ' B'; if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB'; return (b/1024/1024).toFixed(1) + ' MB'; }
+
+  setupDrop('file-drop', '/files/upload', async (data, file) => {
+    showToast('File uploaded', 'success');
+    loadFiles();
+  });
+  setupDrop('doc-drop', '/docs/upload', async (data, file) => {
+    showToast('Document indexed for RAG', 'success');
+    loadDocs();
+  });
+
+  function setupDrop(dropId, endpoint, onSuccess) {
+    const drop = document.getElementById(dropId);
+    drop.addEventListener('click', () => (endpoint === '/docs/upload' ? docInput : fileInput).click());
+    drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('dragover'); });
+    drop.addEventListener('dragleave', () => drop.classList.remove('dragover'));
+    drop.addEventListener('drop', async e => {
+      e.preventDefault();
+      drop.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if (!file) return;
+      try {
+        const extra = endpoint === '/docs/upload' ? { filename: file.name } : {};
+        const data = await uploadFile(file, endpoint, extra);
+        onSuccess(data, file);
+      } catch (err) { showToast(err.message, 'error'); }
+    });
+  }
+
+  // ─── Facts ───
+  async function loadFacts() {
+    const list = document.getElementById('facts-list');
+    list.innerHTML = '<div class="empty-state">Loading memories...</div>';
+    try {
+      const resp = await fetch(`${API_BASE}/facts`, { headers: getHeaders('') });
+      const data = await resp.json();
+      const facts = data.facts || {};
+      list.innerHTML = '';
+      const keys = Object.keys(facts);
+      if (!keys.length) { list.innerHTML = '<div class="empty-state">No memories stored yet</div>'; return; }
+      keys.forEach(key => {
+        const item = document.createElement('div');
+        item.className = 'list-item';
+        item.innerHTML = `<span class="name">${escapeHtml(facts[key])}</span><div class="actions"><button class="fact-delete" title="Forget">🗑️</button></div>`;
+        item.querySelector('.fact-delete').addEventListener('click', () => deleteFact(key));
+        list.appendChild(item);
+      });
+    } catch (e) { list.innerHTML = '<div class="empty-state">Failed to load memories</div>'; }
+  }
+
+  async function deleteFact(key) {
+    try {
+      await fetch(`${API_BASE}/facts/${encodeURIComponent(key)}`, { method: 'DELETE', headers: getHeaders('') });
+      loadFacts();
+    } catch (e) { showToast(e.message, 'error'); }
+  }
+
+  // ─── Research ───
+  document.getElementById('research-run-btn').addEventListener('click', async () => {
+    const query = document.getElementById('research-query').value.trim();
+    if (!query) return;
+    const btn = document.getElementById('research-run-btn');
+    btn.disabled = true;
+    btn.textContent = 'Researching...';
+    try {
+      const resp = await fetch(`${API_BASE}/research`, { method: 'POST', headers: getHeaders(), body: JSON.stringify({ query }) });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || 'Research failed');
+      document.getElementById('research-result').style.display = 'block';
+      document.getElementById('research-answer').textContent = data.answer || 'No answer.';
+      const sourcesEl = document.getElementById('research-sources');
+      sourcesEl.innerHTML = (data.sources || []).map(s => `<div class="list-item"><a href="${s.url}" target="_blank" rel="noopener" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(s.title)}</a><span class="meta">${escapeHtml(s.url)}</span></div>`).join('');
+    } catch (e) { showToast(e.message, 'error'); }
+    finally { btn.disabled = false; btn.textContent = 'Research'; }
+  });
+
+  // ─── Coder ───
+  document.getElementById('coder-run-btn').addEventListener('click', async () => {
+    const request = document.getElementById('coder-request').value.trim();
+    const filename = document.getElementById('coder-filename').value.trim() || 'generated.py';
+    const language = document.getElementById('coder-language').value;
+    if (!request) return;
+    const btn = document.getElementById('coder-run-btn');
+    btn.disabled = true;
+    btn.textContent = 'Generating...';
+    try {
+      const resp = await fetch(`${API_BASE}/coder`, { method: 'POST', headers: getHeaders(), body: JSON.stringify({ action: 'generate', request, filename, language }) });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || 'Code generation failed');
+      document.getElementById('coder-result').style.display = 'block';
+      document.getElementById('coder-code').textContent = data.code || data.result?.code || 'No code returned.';
+      applyHighlighting();
+    } catch (e) { showToast(e.message, 'error'); }
+    finally { btn.disabled = false; btn.textContent = 'Generate Code'; }
+  });
+
+  // ─── Login / Identity ───
+  function showLoginError(msg) { document.getElementById('login-error').textContent = msg; document.getElementById('login-error').style.display = 'block'; }
+  function clearLoginError() { document.getElementById('login-error').style.display = 'none'; }
+
+  document.querySelectorAll('.login-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.login-tab').forEach(t => { t.classList.remove('active'); t.style.background = 'var(--bg)'; t.style.color = 'var(--text-secondary)'; });
+      tab.classList.add('active'); tab.style.background = 'var(--surface-active)'; tab.style.color = 'var(--text)';
+      document.getElementById('login-identity-row').style.display = tab.dataset.tab === 'claim' ? 'block' : 'none';
+    });
+  });
+
+  document.getElementById('login-btn').addEventListener('click', async () => {
+    clearLoginError();
+    const name = document.getElementById('login-display-name').value.trim();
+    const passphrase = document.getElementById('login-passphrase').value;
+    const deviceName = document.getElementById('login-device-name').value.trim() || 'Browser';
+    const key = document.getElementById('login-api-key').value.trim();
+    if (key) { apiKey = key; localStorage.setItem('eunice_api_key', apiKey); }
+    if (!apiKey && !sessionToken) { showLoginError('API key or existing session required'); return; }
+
+    const activeTab = document.querySelector('.login-tab.active').dataset.tab;
+    const endpoint = activeTab === 'create' ? '/identity/create' : '/identity/claim';
+    const body = { display_name: name || 'User', passphrase, device_name: deviceName, device_id: deviceId };
+    if (activeTab === 'claim') body.identity_id = document.getElementById('login-identity-id').value.trim();
+
+    try {
+      const resp = await fetch(`${API_BASE}${endpoint}`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(body) });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || 'Login failed');
+      sessionToken = data.session_token;
       identityId = data.identity_id;
-      loadIdentity();
-    } else {
-      sessionToken = '';
-      localStorage.removeItem('eunice_session_token');
-      showLogin();
-    }
-  } else if (!apiKey) {
-    showLogin();
+      displayName = data.display_name || name || 'User';
+      localStorage.setItem('eunice_session_token', sessionToken);
+      localStorage.setItem('eunice_identity_id', identityId);
+      localStorage.setItem('eunice_display_name', displayName);
+      closeModal('login-overlay');
+      await initApp();
+    } catch (e) { showLoginError(e.message); }
+  });
+
+  document.getElementById('login-skip-btn').addEventListener('click', () => {
+    closeModal('login-overlay');
+    initApp();
+  });
+
+  document.getElementById('logout-btn').addEventListener('click', () => {
+    localStorage.removeItem('eunice_session_token');
+    localStorage.removeItem('eunice_identity_id');
+    localStorage.removeItem('eunice_display_name');
+    sessionToken = ''; identityId = ''; displayName = '';
+    closeModal('settings-overlay');
+    openModal('login-overlay');
+  });
+  document.getElementById('logout-sidebar-btn').addEventListener('click', () => {
+    localStorage.removeItem('eunice_session_token');
+    localStorage.removeItem('eunice_identity_id');
+    localStorage.removeItem('eunice_display_name');
+    sessionToken = ''; identityId = ''; displayName = '';
+    openModal('login-overlay');
+  });
+
+  // ─── Settings ───
+  document.getElementById('save-btn').addEventListener('click', async () => {
+    apiKey = document.getElementById('api-key-input').value.trim();
+    localStorage.setItem('eunice_api_key', apiKey);
+    const personality = document.getElementById('personality-box').value;
+    try {
+      await fetch(`${API_BASE}/personality`, { method: 'POST', headers: getHeaders(), body: JSON.stringify({ personality }) });
+      showToast('Settings saved', 'success');
+    } catch (e) { showToast('Failed to save personality', 'error'); }
+    closeModal('settings-overlay');
+  });
+
+  document.getElementById('voice-toggle').addEventListener('click', function() {
+    voiceEnabled = !voiceEnabled;
+    this.style.background = voiceEnabled ? 'var(--accent)' : '#333';
+    this.querySelector('div').style.transform = voiceEnabled ? 'translateX(20px)' : 'translateX(0)';
+  });
+
+  document.getElementById('voice-select').addEventListener('change', e => { selectedVoice = e.target.value; });
+  document.getElementById('rate-select').addEventListener('change', e => { speechRate = parseFloat(e.target.value); });
+
+  function populateVoices() {
+    voices = window.speechSynthesis?.getVoices() || [];
+    const select = document.getElementById('voice-select');
+    select.innerHTML = '<option value="">Default (Auto-pick female)</option>';
+    voices.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = v.name;
+      opt.textContent = `${v.name} (${v.lang})`;
+      select.appendChild(opt);
+    });
+    if (selectedVoice) select.value = selectedVoice;
+  }
+  if (window.speechSynthesis) {
+    window.speechSynthesis.onvoiceschanged = populateVoices;
+    populateVoices();
   }
 
-  if (lastSession) {
-    currentSession = lastSession;
-    sessionTitle.textContent = lastSessionTitle || 'Previous Chat';
-    loadSessionHistory(currentSession);
-  } else {
-    createNewChat();
+  // ─── Voice input ───
+  if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false; recognition.interimResults = false;
+    recognition.onresult = e => { input.value = e.results[0][0].transcript; };
+    recognition.onerror = () => { micBtn.classList.remove('active'); showToast('Voice input failed', 'error'); };
+    recognition.onend = () => micBtn.classList.remove('active');
+    micBtn.addEventListener('click', () => {
+      if (micBtn.classList.contains('active')) { recognition.stop(); }
+      else { micBtn.classList.add('active'); recognition.start(); }
+    });
+  } else { micBtn.style.display = 'none'; }
+
+  // ─── Health / Init ───
+  async function checkHealth() {
+    try {
+      const resp = await fetch(`${API_BASE}/health`, { headers: getHeaders('') });
+      const data = await resp.json();
+      modelBadge.textContent = data.model || 'EUNICE';
+      return data;
+    } catch (e) { modelBadge.textContent = 'Offline'; return null; }
   }
-}
-initApp();
-</script>
+
+  async function loadPersonality() {
+    try {
+      const resp = await fetch(`${API_BASE}/personality`, { headers: getHeaders('') });
+      const data = await resp.json();
+      document.getElementById('personality-box').value = data.personality || '';
+    } catch (e) {}
+  }
+
+  async function initApp() {
+    await checkHealth();
+    await loadSessions();
+    await loadPersonality();
+    if (sessionToken) {
+      try {
+        const resp = await fetch(`${API_BASE}/identity/me`, { headers: getHeaders('') });
+        const data = await resp.json();
+        displayName = data.display_name || displayName || 'User';
+        identityId = data.identity_id || identityId;
+        localStorage.setItem('eunice_display_name', displayName);
+        localStorage.setItem('eunice_identity_id', identityId);
+      } catch (e) {}
+    }
+    document.getElementById('user-name').textContent = displayName || 'Guest';
+    document.getElementById('user-avatar').textContent = (displayName || '?')[0].toUpperCase();
+    document.getElementById('user-meta').textContent = sessionToken ? 'Signed in' : 'Local mode';
+    document.getElementById('settings-identity').textContent = identityId || 'Not logged in';
+    document.getElementById('api-key-input').value = apiKey;
+
+    const savedSession = localStorage.getItem('eunice_current_session');
+    if (savedSession) {
+      currentSession = savedSession;
+      await loadHistory(currentSession);
+    }
+    document.getElementById('loading-overlay').style.display = 'none';
+  }
+
+  // Periodic health check
+  setInterval(checkHealth, 10000);
+
+  // Boot
+  if (!sessionToken && !apiKey) {
+    openModal('login-overlay');
+  }
+  initApp();
+  </script>
 </body>
 </html>

@@ -14,15 +14,15 @@ EXTRACTION_PROMPT = """You are a fact extraction engine for a personal AI assist
 Analyze the following conversation exchange and extract structured information.
 
 Return a JSON object with this exact structure:
-{
+{{
   "facts": [
-    {"key": "snake_case_key", "value": "natural language fact", "category": "personal|work|family|preference|schedule|location|health|other", "confidence": 0.0-1.0}
+    {{"key": "snake_case_key", "value": "natural language fact", "category": "personal|work|family|preference|schedule|location|health|other", "confidence": 0.0-1.0}}
   ],
   "relationships": [
-    {"entity": "Name or thing", "entity_type": "person|organization|object|place|other", "relationship_type": "sister|brother|friend|employer|owns|lives_in|works_at|other", "confidence": 0.0-1.0}
+    {{"entity": "Name or thing", "entity_type": "person|organization|object|place|other", "relationship_type": "sister|brother|friend|employer|owns|lives_in|works_at|other", "confidence": 0.0-1.0}}
   ],
   "gaps_filled": ["name", "work", "family", "location", "preferences"]
-}
+}}
 
 Rules:
 - Only extract facts the USER explicitly states or strongly implies.

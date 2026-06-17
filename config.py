@@ -15,8 +15,9 @@ FILES_DIR.mkdir(parents=True, exist_ok=True)
 
 # Inference
 OLLAMA_URL = os.getenv("EUNICE_OLLAMA_URL", "http://localhost:11434")
-#MODEL_NAME = os.getenv("EUNICE_MODEL", "llama3.2:3b")
-MODEL_NAME = os.getenv("EUNICE_MODEL", "phi4")
+MODEL_NAME = os.getenv("EUNICE_MODEL", "llama3.2:3b")
+#MODEL_NAME = os.getenv("EUNICE_MODEL", "phi4")
+OLLAMA_TIMEOUT = float(os.getenv("EUNICE_OLLAMA_TIMEOUT", "300.0"))
 MEMORY_LIMIT = int(os.getenv("EUNICE_MEMORY_LIMIT", "20"))
 
 # Auth

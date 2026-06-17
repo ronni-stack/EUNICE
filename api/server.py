@@ -9,10 +9,10 @@ import asyncio
 import logging
 import httpx
 from pathlib import Path
-from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Depends
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Depends, File, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from config import BASE_DIR, DATA_DIR, VERSION, MODEL_NAME, MEMORY_LIMIT
+from config import BASE_DIR, DATA_DIR, VERSION, MODEL_NAME, MEMORY_LIMIT, OLLAMA_URL, OLLAMA_TIMEOUT
 from core.auth import verify_token, get_current_user, get_auth_context, AuthContext
 from core.identity import IdentityManager
 from core.personality import load_personality, save_personality
@@ -229,6 +229,18 @@ async def generate_dynamic_denial(user_msg: str) -> str:
         return denial
     return "I'm drawing a blank on that one. What am I missing?"
 
+def resolve_tool_name(name: str) -> str:
+    """Resolve a tool name from user confirmation, tolerating missing underscores."""
+    available = [t["name"] for t in tools.get_available_tools()]
+    if name in available:
+        return name
+    # Try matching with underscores removed (e.g. getbalance -> get_balance)
+    name_flat = name.replace("_", "")
+    for t in available:
+        if t.replace("_", "") == name_flat:
+            return t
+    return name
+
 # --- Single System Message Builder with Trail Context ---
 def build_system_message(personality: str, intent: str, user_msg: str,
                          facts: dict, trail_context: str = "", tools: list = None,
@@ -239,15 +251,10 @@ def build_system_message(personality: str, intent: str, user_msg: str,
     # 1. IDENTITY (always first)
     identity = "You are EUNICE. Your name is EUNICE. You are a personal assistant. You never deny having a name or identity. This is who you are — not information the user provided."
 
-    # 2. TONE ADAPTATION
-    if tone:
-        parts.append(format_tone_instruction(tone))
-
     # 3. VOICE EXAMPLES (concrete samples of how EUNICE speaks)
     voice_examples = f"""
 How EUNICE speaks:
 - "Hey {user_name}. What's up?"
-- "You drive a Tesla Model 3. Want me to check if service is due?"
 - "I'm drawing a blank on that one. What am I missing?"
 - "I can't print photos, but I can find them and make a digital album. Your move."
 - "Morning. You have a 9am call and traffic is already garbage. Leave by 8:15?"
@@ -258,21 +265,37 @@ How EUNICE does NOT speak:
 - "It seems like we're starting with..."
 - "If there's anything else you'd like to know..."
 - "I'm an AI assistant designed to help..."
+- Inventing facts about the user or pretending to remember things that weren't said.
 """
 
     parts = [identity, personality, voice_examples]
 
-    # 4. DOCUMENT CONTEXT (RAG)
+    # 2. TONE ADAPTATION
+    if tone:
+        parts.append(format_tone_instruction(tone))
+
+    # 4. CAPABILITIES (always list them so EUNICE knows what it can do)
+    capability_text = "Capabilities you have (never deny these; never claim others):\n"
+    capability_text += "- research: Search the internet, fetch pages, and summarize with citations.\n"
+    capability_text += "- coder: Write, edit, analyze, and run Python code in your sandboxed workspace.\n"
+    capability_text += "- file_manager: Read, write, list, and manage files in your sandboxed workspace.\n"
+    if tools:
+        capability_text += "\n".join([f"- {t['name']}: {t['description']}" for t in tools])
+    if intent == "tool_use":
+        capability_text += "\nTo use a subprocess tool, respond with JSON: {\"tool\": \"name\", \"params\": {}}"
+    parts.append(capability_text)
+
+    # 5. DOCUMENT CONTEXT (RAG)
     if doc_context:
         parts.append("Relevant document excerpts:\n" + doc_context)
         parts.append("Rule for documents: Base your answer on the excerpts above when the question relates to them. Do not invent details not present in the excerpts.")
 
-    # 5. TRAIL CONTEXT
+    # 6. TRAIL CONTEXT
     if trail_context:
         parts.append(trail_context)
         parts.append("Rule for facts: Only use what the user explicitly told you. If they didn't mention something, admit you don't know. Never invent.")
 
-    # 6. RELEVANT FACTS
+    # 7. RELEVANT FACTS
     if intent == "fact_recall" and facts:
         relevant = []
         query_words = set(user_msg.lower().split())
@@ -283,22 +306,17 @@ How EUNICE does NOT speak:
         if relevant:
             parts.append("Known facts:\n" + "\n".join([f"- {f}" for f in relevant[:3]]))
 
-    # 7. TOOLS
-    elif intent == "tool_use" and tools:
-        tool_text = "Available tools:\n" + "\n".join([f"- {t['name']}: {t['description']}" for t in tools])
-        tool_text += "\nTo use a tool, respond with JSON: {\"tool\": \"name\", \"params\": {}}"
-        parts.append(tool_text)
-
-    # 8. GENERAL CHAT
+    # 8. GENERAL CHAT — light context only
     elif intent == "general_chat" and facts:
         recent = list(facts.values())[:2]
         if recent:
             parts.append("Recent context:\n" + "\n".join([f"- {f}" for f in recent]))
 
-    # 9. ANTI-GENERIC RULES
+    # 9. ANTI-HALLUCINATION & ANTI-GENERIC RULES
+    parts.append("Rule: Only reference facts explicitly stored above. Never invent past conversations, shared experiences, or personal details.")
     parts.append("Rule: Never start with 'It seems like...' or 'I understand that...' Just answer directly.")
     parts.append("Rule: Never end with 'If there's anything else...' or 'Feel free to ask!' Just stop when you're done.")
-    parts.append(f"Rule: Speak to {user_name} like you've worked together for years. No introductions, no explanations.")
+    parts.append(f"Rule: Speak to {user_name} naturally, but do not pretend to know things you have not been told.")
     parts.append("Rule: Keep responses under 3 sentences unless asked for detail.")
 
     return "\n\n".join(parts)
@@ -524,17 +542,18 @@ async def chat(request: Request, background_tasks: BackgroundTasks, token: str =
     # 1. Explicit confirmation
     confirm_match = re.match(r'^confirm\s+(\w+)', user_msg.lower())
     if confirm_match:
-        tool_name = confirm_match.group(1)
+        tool_name = resolve_tool_name(confirm_match.group(1))
         result = await tools.execute(tool_name, {"confirmed": True, "user_id": user_id})
         return {"reply": f"[Executed {tool_name}]: {result}"}
 
     # 2. Hardcoded intent routing
     user_msg_lower = user_msg.lower()
 
-    if any(word in user_msg_lower for word in ["balance", "account", "how much money", "bank"]):
+    coding_keywords = ["code", "script", "python", "function", "write a", "program"]
+    if any(word in user_msg_lower for word in ["balance", "account", "how much money", "bank"]) and not any(word in user_msg_lower for word in coding_keywords):
         result = await tools.execute("get_balance", {"user_id": user_id})
         if result.startswith("[PENDING:"):
-            return {"reply": f"I need your approval for that. {result}"}
+            return {"reply": f"I need your approval for that. {result}\n\nSay `confirm get_balance` to proceed."}
         try:
             summary = await generate_non_stream(prompt=f"The user asked about their balance. Here's the raw data: {result}. Summarize it briefly.")
             return {"reply": summary or result}
@@ -544,7 +563,7 @@ async def chat(request: Request, background_tasks: BackgroundTasks, token: str =
     if any(word in user_msg_lower for word in ["scan network", "network scan", "who is on my wifi", "devices on network"]):
         result = await tools.execute("network_scan", {"user_id": user_id})
         if result.startswith("[PENDING:"):
-            return {"reply": f"I need your approval for that. {result}"}
+            return {"reply": f"I need your approval for that. {result}\n\nSay `confirm network_scan` to proceed."}
         try:
             summary = await generate_non_stream(prompt=f"The user asked to scan the network. Here's the raw result: {result}. Summarize it briefly.")
             return {"reply": summary or result}
@@ -569,6 +588,47 @@ async def chat(request: Request, background_tasks: BackgroundTasks, token: str =
     if any(word in user_msg_lower for word in ["transfer", "send money", "wire", "pay", "send $"]):
         result = await tools.execute("transfer_funds", {"user_id": user_id})
         return {"reply": result}
+
+    # Research shortcut
+    if any(word in user_msg_lower for word in ["research", "look up", "search online", "find out about"]):
+        query = user_msg
+        for trigger in ["research", "look up", "search online", "find out about"]:
+            if trigger in user_msg_lower:
+                parts = user_msg_lower.split(trigger, 1)
+                if len(parts) > 1:
+                    query = user_msg[len(trigger):].strip(" ,:.?!")
+                break
+        if query:
+            try:
+                result = await research.research(query)
+                response = result.get("answer", "I couldn't find an answer.")
+                sources = result.get("sources", [])
+                if sources:
+                    response += "\n\nSources:\n" + "\n".join([f"- {s.get('title', 'Unknown')} ({s.get('url', '')})" for s in sources[:3]])
+            except Exception as e:
+                response = f"Research failed: {e}"
+            memory.save_interaction(session, user_msg, response, [], user_id=user_id)
+            return {"reply": response}
+
+    # Coding shortcut
+    if any(word in user_msg_lower for word in ["write code", "code", "script", "python function", "program that"]):
+        request_text = user_msg
+        for trigger in ["write code for", "write code", "code for", "code a", "code me", "script that", "python function that", "program that"]:
+            if trigger in user_msg_lower:
+                parts = user_msg_lower.split(trigger, 1)
+                if len(parts) > 1:
+                    request_text = user_msg[len(trigger):].strip(" ,:.?!")
+                break
+        if request_text:
+            try:
+                from core.coder import CoderAgent
+                agent = CoderAgent(user_id)
+                result = await agent.generate(request_text, "generated.py", "python")
+                response = f"I wrote `{result['filename']}` in your workspace:\n\n```{result['language']}\n{result['code']}\n```"
+            except Exception as e:
+                response = f"Coding assistant failed: {e}"
+            memory.save_interaction(session, user_msg, response, [], user_id=user_id)
+            return {"reply": response}
 
     # 3. Explicit memory command
     if memory.is_explicit_memory_command(user_msg):
@@ -620,7 +680,11 @@ async def chat(request: Request, background_tasks: BackgroundTasks, token: str =
     intent = "general_chat"
     if any(k in user_msg_lower for k in ["what", "remember", "do you know", "tell me about"]):
         intent = "fact_recall"
-    elif any(k in user_msg_lower for k in ["scan", "balance", "note", "transfer", "update"]):
+    elif any(k in user_msg_lower for k in ["scan", "balance", "note", "transfer", "update", "file", "upload"]):
+        intent = "tool_use"
+    elif any(k in user_msg_lower for k in ["research", "look up", "search online", "find out", "what is", "what are", "who is", "latest news"]):
+        intent = "tool_use"
+    elif any(k in user_msg_lower for k in ["write code", "code", "script", "python function", "program"]):
         intent = "tool_use"
 
     personality = load_personality(user_name=user_name)
@@ -643,8 +707,8 @@ async def chat(request: Request, background_tasks: BackgroundTasks, token: str =
         "options": {"temperature": 0.7, "num_predict": 256}
     }
     try:
-        async with httpx.AsyncClient(timeout=180.0) as client:
-            resp = await client.post("http://localhost:11434/api/chat", json=payload)
+        async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:
+            resp = await client.post(f"{OLLAMA_URL}/api/chat", json=payload)
             resp.raise_for_status()
             raw = resp.json()["message"]["content"].strip()
             raw = sanitize_response(raw)
@@ -703,7 +767,7 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
 
     confirm_match = re.match(r'^confirm\s+(\w+)', user_msg.lower())
     if confirm_match:
-        tool_name = confirm_match.group(1)
+        tool_name = resolve_tool_name(confirm_match.group(1))
         result = await tools.execute(tool_name, {"confirmed": True, "user_id": user_id})
         response = f"[Executed {tool_name}]: {result}" if not result.startswith("[PENDING:") else result
         return StreamingResponse(
@@ -716,12 +780,13 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
 
     user_msg_lower = user_msg.lower()
 
-    if any(word in user_msg_lower for word in ["balance", "account", "how much money", "bank"]):
+    coding_keywords = ["code", "script", "python", "function", "write a", "program"]
+    if any(word in user_msg_lower for word in ["balance", "account", "how much money", "bank"]) and not any(word in user_msg_lower for word in coding_keywords):
         logger.info(f"[CHAT] user={user_id} intent=tool_balance")
         result = await tools.execute("get_balance", {"user_id": user_id})
         logger.info(f"[CHAT] user={user_id} balance_result={result[:120]!r}")
         if result.startswith("[PENDING:"):
-            response = f"I need your approval for that. {result}"
+            response = f"I need your approval for that. {result}\n\nSay `confirm get_balance` to proceed."
         else:
             try:
                 summary = await generate_non_stream(prompt=f"The user asked about their balance. Here's the raw data: {result}. Summarize it briefly and naturally.")
@@ -740,7 +805,7 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
     if any(word in user_msg_lower for word in ["scan network", "network scan", "who is on my wifi", "devices on network"]):
         result = await tools.execute("network_scan", {"user_id": user_id})
         if result.startswith("[PENDING:"):
-            response = f"I need your approval for that. {result}"
+            response = f"I need your approval for that. {result}\n\nSay `confirm network_scan` to proceed."
         else:
             try:
                 summary = await generate_non_stream(prompt=f"The user asked to scan the network. Here's the raw result: {result}. Summarize it briefly.")
@@ -794,6 +859,62 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
             ]),
             media_type="text/event-stream"
         )
+
+    # --- Research shortcut ---
+    if any(word in user_msg_lower for word in ["research", "look up", "search online", "find out about"]):
+        query = user_msg
+        for trigger in ["research", "look up", "search online", "find out about"]:
+            if trigger in user_msg_lower:
+                parts = user_msg_lower.split(trigger, 1)
+                if len(parts) > 1:
+                    query = user_msg[len(trigger):].strip(" ,:.?!")
+                break
+        if query:
+            try:
+                result = await research.research(query)
+                response = result.get("answer", "I couldn't find an answer.")
+                sources = result.get("sources", [])
+                if sources:
+                    response += "\n\nSources:\n" + "\n".join([f"- {s.get('title', 'Unknown')} ({s.get('url', '')})" for s in sources[:3]])
+            except Exception as e:
+                response = f"Research failed: {e}"
+            memory.save_interaction(session, user_msg, response, [], user_id=user_id)
+            trails.append_to_trail(trail_id, response, role="assistant", user_id=user_id, source_type="chat")
+            return StreamingResponse(
+                iter([
+                    f'data: {json.dumps({"token": response, "done": False})}\n\n',
+                    f'data: {json.dumps({"done": True, "full": response})}\n\n'
+                ]),
+                media_type="text/event-stream"
+            )
+
+    # --- Coding shortcut ---
+    if any(word in user_msg_lower for word in ["write code", "code", "script", "python function", "program that"]):
+        request_text = user_msg
+        for trigger in ["write code for", "write code", "code for", "code a", "code me", "script that", "python function that", "program that"]:
+            if trigger in user_msg_lower:
+                parts = user_msg_lower.split(trigger, 1)
+                if len(parts) > 1:
+                    request_text = user_msg[len(trigger):].strip(" ,:.?!")
+                break
+        if request_text:
+            try:
+                from core.coder import CoderAgent
+                agent = CoderAgent(user_id)
+                filename = "generated.py"
+                result = await agent.generate(request_text, filename, "python")
+                response = f"I wrote `{result['filename']}` in your workspace:\n\n```{result['language']}\n{result['code']}\n```"
+            except Exception as e:
+                response = f"Coding assistant failed: {e}"
+            memory.save_interaction(session, user_msg, response, [], user_id=user_id)
+            trails.append_to_trail(trail_id, response, role="assistant", user_id=user_id, source_type="chat")
+            return StreamingResponse(
+                iter([
+                    f'data: {json.dumps({"token": response, "done": False})}\n\n',
+                    f'data: {json.dumps({"done": True, "full": response})}\n\n'
+                ]),
+                media_type="text/event-stream"
+            )
 
     if memory.is_explicit_memory_command(user_msg):
         fact_text = user_msg
@@ -859,7 +980,11 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
     intent = "general_chat"
     if any(k in user_msg_lower for k in ["what", "remember", "do you know", "tell me about"]):
         intent = "fact_recall"
-    elif any(k in user_msg_lower for k in ["scan", "balance", "note", "transfer", "update"]):
+    elif any(k in user_msg_lower for k in ["scan", "balance", "note", "transfer", "update", "file", "upload"]):
+        intent = "tool_use"
+    elif any(k in user_msg_lower for k in ["research", "look up", "search online", "find out", "what is", "what are", "who is", "latest news"]):
+        intent = "tool_use"
+    elif any(k in user_msg_lower for k in ["write code", "code", "script", "python function", "program"]):
         intent = "tool_use"
 
     logger.info(f"[CHAT] user={user_id} intent={intent} trail={trail_id}")
@@ -910,11 +1035,12 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
                     break
 
             if tool_name:
+                tool_name = resolve_tool_name(tool_name)
                 tool_params["user_id"] = user_id
                 tool_result = await tools.execute(tool_name, tool_params)
                 logger.info(f"[CHAT] user={user_id} tool={tool_name} result={tool_result[:120]!r}")
                 if tool_result.startswith("[PENDING:"):
-                    full_reply = f"I need your approval for that. Say 'confirm {tool_name}' to proceed."
+                    full_reply = f"I need your approval for that. Say `confirm {tool_name}` to proceed."
                     yield f'data: {json.dumps({"token": full_reply})}\n\n'
                 else:
                     yield f'data: {json.dumps({"token": f"[Result: {tool_result}]\n"})}\n\n'
@@ -1021,18 +1147,20 @@ async def set_trail_status(trail_id: str, request: Request, token: str = Depends
 @app.post("/docs/upload")
 async def upload_document(
     request: Request,
-    filename: str,
+    file: UploadFile = File(...),
+    filename: str = "",
     token: str = Depends(verify_token)
 ):
-    """Upload a PDF, TXT, or MD document for RAG retrieval."""
+    """Upload a PDF, TXT, or MD document for RAG retrieval. Accepts multipart form."""
     user_id = await _resolve_user_id(request)
-    body = await request.body()
+    upload_name = filename or file.filename or "upload"
+    body = await file.read()
 
     if not body:
         raise HTTPException(status_code=400, detail="Empty file body")
 
     allowed_extensions = {".pdf", ".txt", ".md"}
-    ext = Path(filename).suffix.lower()
+    ext = Path(upload_name).suffix.lower()
     if ext not in allowed_extensions:
         raise HTTPException(
             status_code=400,
@@ -1040,11 +1168,11 @@ async def upload_document(
         )
 
     try:
-        result = await ingestion.ingest(filename, body, user_id)
-        logger.info(f"[INGEST] user={user_id} filename={filename} result={result['status']} chunks={result.get('chunks', 0)}")
+        result = await ingestion.ingest(upload_name, body, user_id)
+        logger.info(f"[INGEST] user={user_id} filename={upload_name} result={result['status']} chunks={result.get('chunks', 0)}")
         return result
     except Exception as e:
-        logger.exception(f"[INGEST ERROR] user={user_id} filename={filename} error={e}")
+        logger.exception(f"[INGEST ERROR] user={user_id} filename={upload_name} error={e}")
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}")
 
 
@@ -1113,6 +1241,24 @@ async def write_file(request: Request, token: str = Depends(verify_token)):
         fm = FileManager(user_id)
         result = fm.write(path, content, mode=mode)
         return {"result": result}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/files/upload")
+async def upload_file(request: Request, file: UploadFile = File(...), path: str = "", token: str = Depends(verify_token)):
+    """Upload a binary file into the user's sandboxed workspace."""
+    from core.file_manager import FileManager
+    user_id = await _resolve_user_id(request)
+    try:
+        fm = FileManager(user_id)
+        target_dir = fm._resolve_path(path) if path else fm.workspace
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / (file.filename or "upload")
+        data = await file.read()
+        target.write_bytes(data)
+        rel_path = str(target.relative_to(fm.workspace))
+        return {"result": fm._entry_info(target, rel_path)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1196,6 +1342,16 @@ async def delete_session(session: str, request: Request, token: str = Depends(ve
     user_id = await _resolve_user_id(request)
     memory.delete_session(session, user_id=user_id)
     return {"deleted": True}
+
+@app.put("/sessions/{session}")
+async def rename_session(session: str, request: Request, token: str = Depends(verify_token)):
+    user_id = await _resolve_user_id(request)
+    body = await request.json()
+    new_name = body.get("name", "").strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="name is required")
+    memory.rename_session(session, new_name, user_id=user_id)
+    return {"renamed": True}
 
 @app.get("/facts")
 async def list_facts(request: Request, category: str = None, token: str = Depends(verify_token)):

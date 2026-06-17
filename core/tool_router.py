@@ -54,14 +54,14 @@ class ToolRouter:
 
         # CRITICAL: Always deny
         if risk == "critical":
-            msg = f"[DENIED: {tool_name} requires explicit biometric confirmation. Not yet implemented.]"
+            msg = f"[DENIED: `{tool_name}` requires explicit biometric confirmation. Not yet implemented.]"
             self._log_audit(tool_name, risk, params, msg, approved=False)
             return msg
 
         # HIGH: Require explicit confirmation parameter
         if risk == "high":
             if not params.get("confirmed", False):
-                msg = f"[PENDING: {tool_name} requires approval. Say 'confirm {tool_name}' to execute.]"
+                msg = f"[PENDING: `{tool_name}` requires approval. Say 'confirm {tool_name}' to execute.]"
                 self._log_audit(tool_name, risk, params, msg, approved=False)
                 return msg
             # If confirmed, proceed but log heavily

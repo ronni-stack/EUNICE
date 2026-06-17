@@ -80,7 +80,8 @@ cmd_setup() {
         pytest pytest-asyncio \
         bcrypt pyjwt \
         pymupdf \
-        duckduckgo-search beautifulsoup4
+        ddgs beautifulsoup4 \
+        python-multipart
 
     echo ""
     echo "[5/5] Creating directories..."
