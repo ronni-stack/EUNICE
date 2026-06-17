@@ -1129,6 +1129,39 @@ async def delete_file(request: Request, path: str, token: str = Depends(verify_t
         raise HTTPException(status_code=400, detail=str(e))
 
 
+# --- Coding Assistant ---
+@app.post("/coder")
+async def coder_endpoint(request: Request, token: str = Depends(verify_token)):
+    """Generate, edit, analyze, or run code in the user's sandboxed workspace."""
+    from core.coder import CoderAgent, CoderError
+    user_id = await _resolve_user_id(request)
+    body = await request.json()
+    action = body.get("action", "generate")
+    req_text = body.get("request", "")
+    filename = body.get("filename", "")
+    language = body.get("language", "python")
+    timeout = int(body.get("timeout", 10))
+
+    try:
+        agent = CoderAgent(user_id)
+        if action == "generate":
+            result = await agent.generate(req_text, filename, language)
+        elif action == "edit":
+            result = await agent.edit(req_text, filename)
+        elif action == "analyze":
+            result = agent.analyze(filename)
+        elif action == "run":
+            result = agent.run(filename, language, timeout)
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
+        return result
+    except CoderError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception(f"[CODER ERROR] user={user_id} action={action} error={e}")
+        raise HTTPException(status_code=500, detail=f"Coder failed: {e}")
+
+
 # --- Health & Sessions ---
 @app.get("/health")
 async def health():
