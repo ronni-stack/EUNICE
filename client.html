@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>EUNICE v0.8</title>
+<title>EUNICE v0.9</title>
 <style>
 :root { --bg:#0b0b0b; --surface:#141414; --surface-hover:#1f1f1f; --text:#e8e8e8; --text-muted:#777; --accent:#00d4aa; --accent-dim:rgba(0,212,170,0.12); --user-bubble:#252525; --ai-bubble:#001a14; --border:#2a2a2a; --danger:#ff4444; --sidebar-width:280px; }
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -96,6 +96,16 @@ html, body { height:100%; background:var(--bg); color:var(--text); font-family:-
 /* Auth Error Toast */
 #auth-error { display:none; position:fixed; top:60px; left:50%; transform:translateX(-50%); background:var(--danger); color:#fff; padding:10px 20px; border-radius:8px; font-size:13px; z-index:300; animation:slideDown .3s ease; white-space:nowrap; }
 @keyframes slideDown { from{opacity:0;transform:translateX(-50%) translateY(-20px);} to{opacity:1;transform:translateX(-50%) translateY(0);} }
+
+/* Login Modal */
+#login-overlay { display:none; position:fixed; inset:0; background:var(--bg); z-index:400; justify-content:center; align-items:center; }
+#login-overlay.active { display:flex; }
+#login-modal { background:var(--surface); border:1px solid var(--border); border-radius:16px; width:92%; max-width:420px; padding:18px; }
+#login-modal h2 { font-size:16px; margin-bottom:14px; color:var(--accent); }
+.login-tab { flex:1; padding:8px; border-radius:8px; border:none; background:var(--surface-hover); color:var(--text-muted); font-size:13px; cursor:pointer; }
+.login-tab.active { background:var(--accent); color:#000; font-weight:600; }
+#login-btn { background:var(--accent); color:#000; font-weight:600; padding:8px 16px; border-radius:8px; border:none; font-size:13px; cursor:pointer; }
+#identity-display { font-size:11px; color:var(--text-muted); }
 </style>
 </head>
 <body>
@@ -157,6 +167,41 @@ html, body { height:100%; background:var(--bg); color:var(--text); font-family:-
   </button>
 </div>
 
+<!-- Login Modal -->
+<div id="login-overlay">
+  <div id="login-modal">
+    <h2>Welcome to EUNICE</h2>
+    <div id="login-tabs" style="display:flex;gap:8px;margin-bottom:14px;">
+      <button class="login-tab active" data-tab="create">Create Identity</button>
+      <button class="login-tab" data-tab="claim">Claim Identity</button>
+    </div>
+    <div id="login-error" style="display:none;color:var(--danger);font-size:12px;margin-bottom:10px;"></div>
+    <div class="modal-row">
+      <label>Display Name</label>
+      <input type="text" id="login-display-name" placeholder="Your name">
+    </div>
+    <div class="modal-row" id="login-identity-row" style="display:none;">
+      <label>Identity ID</label>
+      <input type="text" id="login-identity-id" placeholder="Paste identity ID">
+    </div>
+    <div class="modal-row">
+      <label>Passphrase</label>
+      <input type="password" id="login-passphrase" placeholder="Choose a passphrase">
+    </div>
+    <div class="modal-row">
+      <label>Device Name</label>
+      <input type="text" id="login-device-name" placeholder="e.g. Phone">
+    </div>
+    <div class="modal-row">
+      <label>API Key</label>
+      <input type="password" id="login-api-key" placeholder="Household API key">
+    </div>
+    <div class="modal-btns">
+      <button id="login-btn">Continue</button>
+    </div>
+  </div>
+</div>
+
 <!-- Settings Modal -->
 <div id="overlay">
   <div id="modal">
@@ -164,6 +209,10 @@ html, body { height:100%; background:var(--bg); color:var(--text); font-family:-
     <div class="modal-row">
       <label>API Key</label>
       <input type="password" id="api-key-input" placeholder="Enter your API key..." autocomplete="off">
+    </div>
+    <div class="modal-row">
+      <label>Identity</label>
+      <div id="settings-identity" style="font-size:13px;color:var(--text-muted);">Not logged in</div>
     </div>
     <div class="modal-row toggle-row">
       <label>Voice Output</label>
@@ -187,6 +236,7 @@ html, body { height:100%; background:var(--bg); color:var(--text); font-family:-
       <textarea id="personality-box" placeholder="Loading..."></textarea>
     </div>
     <div class="modal-btns">
+      <button id="logout-btn" style="background:var(--danger);color:#fff;">Log Out</button>
       <button id="cancel-btn">Close</button>
       <button id="save-btn">Save & Apply</button>
     </div>
@@ -215,6 +265,8 @@ let selectedVoice = null;
 let speechRate = 1.0;
 let voices = [];
 let apiKey = localStorage.getItem('eunice_api_key') || '';
+let sessionToken = localStorage.getItem('eunice_session_token') || '';
+let identityId = localStorage.getItem('eunice_identity_id') || '';
 let deviceId = localStorage.getItem('eunice_device_id') || '';
 if (!deviceId) {
   deviceId = 'dev-' + crypto.randomUUID();
@@ -229,9 +281,136 @@ const processingSessions = new Set();
 
 function getHeaders() {
   const h = { 'Content-Type': 'application/json' };
-  if (apiKey) h['Authorization'] = 'Bearer ' + apiKey;
-  if (deviceId) h['X-EUNICE-Device-ID'] = deviceId;
+  if (sessionToken) {
+    h['Authorization'] = 'Bearer ' + sessionToken;
+  } else if (apiKey) {
+    h['Authorization'] = 'Bearer ' + apiKey;
+    if (deviceId) h['X-EUNICE-Device-ID'] = deviceId;
+  }
   return h;
+}
+
+// ─── Login / Identity ───
+const loginOverlay = document.getElementById('login-overlay');
+const loginTabs = document.querySelectorAll('.login-tab');
+const loginDisplayName = document.getElementById('login-display-name');
+const loginIdentityRow = document.getElementById('login-identity-row');
+const loginIdentityId = document.getElementById('login-identity-id');
+const loginPassphrase = document.getElementById('login-passphrase');
+const loginDeviceName = document.getElementById('login-device-name');
+const loginApiKey = document.getElementById('login-api-key');
+const loginBtn = document.getElementById('login-btn');
+const loginError = document.getElementById('login-error');
+let loginMode = 'create';
+
+loginTabs.forEach(tab => {
+  tab.addEventListener('click', () => {
+    loginTabs.forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    loginMode = tab.dataset.tab;
+    loginIdentityRow.style.display = loginMode === 'claim' ? 'block' : 'none';
+    loginDisplayName.parentElement.style.display = loginMode === 'create' ? 'block' : 'none';
+    loginError.style.display = 'none';
+  });
+});
+
+function showLogin() {
+  loginOverlay.classList.add('active');
+  loginApiKey.value = apiKey;
+  loginDeviceName.value = localStorage.getItem('eunice_device_name') || '';
+}
+
+function hideLogin() {
+  loginOverlay.classList.remove('active');
+}
+
+function saveSession(data) {
+  sessionToken = data.token;
+  identityId = data.identity_id;
+  localStorage.setItem('eunice_session_token', data.token);
+  localStorage.setItem('eunice_identity_id', data.identity_id);
+  localStorage.setItem('eunice_device_name', data.display_name || '');
+  hideLogin();
+  loadIdentity();
+  loadSessions();
+}
+
+async function doLogin() {
+  loginError.style.display = 'none';
+  apiKey = loginApiKey.value.trim();
+  localStorage.setItem('eunice_api_key', apiKey);
+
+  const payload = {
+    device_id: deviceId,
+    device_name: loginDeviceName.value.trim() || deviceId,
+    device_type: 'browser'
+  };
+  let url = '/identity/create';
+  if (loginMode === 'create') {
+    payload.display_name = loginDisplayName.value.trim();
+    payload.passphrase = loginPassphrase.value;
+    if (!payload.display_name || !payload.passphrase) {
+      loginError.textContent = 'Display name and passphrase are required.';
+      loginError.style.display = 'block';
+      return;
+    }
+  } else {
+    payload.identity_id = loginIdentityId.value.trim();
+    payload.passphrase = loginPassphrase.value;
+    if (!payload.identity_id || !payload.passphrase) {
+      loginError.textContent = 'Identity ID and passphrase are required.';
+      loginError.style.display = 'block';
+      return;
+    }
+    url = '/identity/claim';
+  }
+
+  try {
+    const resp = await fetch(API_BASE + url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+      body: JSON.stringify(payload)
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      loginError.textContent = data.detail || 'Login failed.';
+      loginError.style.display = 'block';
+      return;
+    }
+    saveSession(data);
+  } catch (e) {
+    loginError.textContent = 'Network error. Is the server running?';
+    loginError.style.display = 'block';
+  }
+}
+
+loginBtn.addEventListener('click', doLogin);
+
+async function loadIdentity() {
+  try {
+    const resp = await fetch(API_BASE + '/identity/me', { headers: getHeaders() });
+    if (resp.ok) {
+      const data = await resp.json();
+      const identityLabel = document.getElementById('identity-label') || document.createElement('span');
+      identityLabel.id = 'identity-label';
+      identityLabel.textContent = data.display_name || data.identity_id;
+      identityLabel.style.cssText = 'font-size:11px;color:var(--text-muted);margin-left:8px;';
+      if (!document.getElementById('identity-label')) {
+        document.getElementById('header-left').appendChild(identityLabel);
+      }
+    }
+  } catch(e) {}
+}
+
+async function logout() {
+  try {
+    await fetch(API_BASE + '/identity/logout', { method: 'POST', headers: getHeaders() });
+  } catch(e) {}
+  sessionToken = '';
+  identityId = '';
+  localStorage.removeItem('eunice_session_token');
+  localStorage.removeItem('eunice_identity_id');
+  showLogin();
 }
 
 function showAuthError(msg) {
@@ -681,6 +860,9 @@ rateSelect.addEventListener('change', () => {
 document.getElementById('settings-btn').addEventListener('click', async () => {
   overlay.classList.add('active');
   apiKeyInput.value = apiKey;
+  document.getElementById('settings-identity').textContent = identityId
+    ? (localStorage.getItem('eunice_device_name') || identityId)
+    : 'Not logged in (API key only)';
   if (voiceEnabled) voiceToggle.classList.add('on');
   else voiceToggle.classList.remove('on');
   try {
@@ -698,6 +880,11 @@ document.getElementById('settings-btn').addEventListener('click', async () => {
 });
 
 document.getElementById('cancel-btn').addEventListener('click', () => overlay.classList.remove('active'));
+
+document.getElementById('logout-btn').addEventListener('click', () => {
+  overlay.classList.remove('active');
+  logout();
+});
 
 document.getElementById('save-btn').addEventListener('click', async () => {
   apiKey = apiKeyInput.value.trim();
@@ -744,13 +931,32 @@ setInterval(checkHealth, 5000);
 const lastSession = localStorage.getItem('eunice_last_session');
 const lastSessionTitle = localStorage.getItem('eunice_last_session_title');
 
-if (lastSession) {
+async function initApp() {
+  // If we have a session token, try to use it; otherwise show login.
+  if (sessionToken) {
+    const resp = await fetch(API_BASE + '/identity/me', { headers: getHeaders() });
+    if (resp.ok) {
+      const data = await resp.json();
+      identityId = data.identity_id;
+      loadIdentity();
+    } else {
+      sessionToken = '';
+      localStorage.removeItem('eunice_session_token');
+      showLogin();
+    }
+  } else if (!apiKey) {
+    showLogin();
+  }
+
+  if (lastSession) {
     currentSession = lastSession;
     sessionTitle.textContent = lastSessionTitle || 'Previous Chat';
     loadSessionHistory(currentSession);
-} else {
+  } else {
     createNewChat();
+  }
 }
+initApp();
 </script>
 </body>
 </html>

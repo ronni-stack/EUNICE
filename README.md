@@ -1,4 +1,4 @@
-# EUNICE v0.8 — Personal AI Assistant (Multi-User + Autonomous Discovery)
+# EUNICE v0.9 — Personal AI Assistant (Multi-User Identity + Autonomous Discovery)
 
 EUNICE is a locally-hosted AI assistant with persistent associative memory, risk-tiered tool execution, and autonomous user profiling.
 

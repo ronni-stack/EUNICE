@@ -1,4 +1,4 @@
-"""EUNICE v0.8 — SQLite Episodic Memory (multi-user)"""
+"""EUNICE v0.9 — SQLite Episodic Memory (multi-user + identity)"""
 import sqlite3
 import json
 from datetime import datetime
@@ -166,7 +166,149 @@ class SQLiteStore:
                     )
                 """)
 
+            # --- Identity & device tables (v0.9) ---
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS identities (
+                    id TEXT PRIMARY KEY,
+                    provider TEXT DEFAULT 'local',
+                    provider_user_id TEXT UNIQUE,
+                    display_name TEXT,
+                    email TEXT,
+                    avatar_url TEXT,
+                    passphrase_hash TEXT,
+                    is_admin BOOLEAN DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS devices (
+                    id TEXT PRIMARY KEY,
+                    identity_id TEXT NOT NULL,
+                    name TEXT,
+                    device_type TEXT,
+                    trusted BOOLEAN DEFAULT 1,
+                    last_seen TEXT DEFAULT CURRENT_TIMESTAMP,
+                    last_ip TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (identity_id) REFERENCES identities(id) ON DELETE CASCADE
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS identity_tokens (
+                    jti TEXT PRIMARY KEY,
+                    identity_id TEXT NOT NULL,
+                    device_id TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    revoked BOOLEAN DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (identity_id) REFERENCES identities(id) ON DELETE CASCADE
+                )
+            """)
+
+            # Migration: existing users rows represent both identity and device in v0.8
+            c.execute("SELECT COUNT(*) FROM identities")
+            if c.fetchone()[0] == 0:
+                c.execute("SELECT id, name, created_at, last_active FROM users")
+                for row in c.fetchall():
+                    user_id, name, created_at, last_active = row
+                    display_name = name or user_id
+                    c.execute("""
+                        INSERT OR IGNORE INTO identities (id, display_name, created_at, updated_at)
+                        VALUES (?, ?, ?, ?)
+                    """, (user_id, display_name, created_at, last_active))
+                    c.execute("""
+                        INSERT OR IGNORE INTO devices (id, identity_id, name, device_type, trusted, created_at, last_seen)
+                        VALUES (?, ?, ?, ?, 1, ?, ?)
+                    """, (user_id, user_id, display_name, "unknown", created_at, last_active))
+
             conn.commit()
+
+    # --- Identities & Devices (v0.9) ---
+    def create_identity(self, identity_id: str, display_name: str, passphrase_hash: str,
+                        is_admin: bool = False, created_at: str = None, updated_at: str = None):
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO identities (id, display_name, passphrase_hash, is_admin, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (identity_id, display_name, passphrase_hash, int(is_admin), created_at, updated_at))
+            conn.commit()
+
+    def get_identity(self, identity_id: str) -> Optional[dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("SELECT * FROM identities WHERE id = ?", (identity_id,))
+            row = c.fetchone()
+            return self._row_to_dict(c, row) if row else None
+
+    def update_identity(self, identity_id: str, **fields):
+        allowed = {"display_name", "email", "avatar_url", "passphrase_hash", "is_admin", "updated_at"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            c.execute(f"UPDATE identities SET {set_clause} WHERE id = ?", (*updates.values(), identity_id))
+            conn.commit()
+
+    def create_device(self, device_id: str, identity_id: str, name: str = None,
+                      device_type: str = "unknown", trusted: bool = True,
+                      created_at: str = None, last_seen: str = None, last_ip: str = None):
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO devices (id, identity_id, name, device_type, trusted, created_at, last_seen, last_ip)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (device_id, identity_id, name, device_type, int(trusted), created_at, last_seen, last_ip))
+            conn.commit()
+
+    def get_device(self, device_id: str) -> Optional[dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("SELECT * FROM devices WHERE id = ?", (device_id,))
+            row = c.fetchone()
+            return self._row_to_dict(c, row) if row else None
+
+    def update_device(self, device_id: str, **fields):
+        allowed = {"name", "device_type", "trusted", "last_seen", "last_ip"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            c.execute(f"UPDATE devices SET {set_clause} WHERE id = ?", (*updates.values(), device_id))
+            conn.commit()
+
+    def list_devices(self, identity_id: str) -> list:
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("SELECT * FROM devices WHERE identity_id = ? ORDER BY last_seen DESC", (identity_id,))
+            return [self._row_to_dict(c, r) for r in c.fetchall()]
+
+    def create_token(self, jti: str, identity_id: str, device_id: str, expires_at: str, created_at: str = None):
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO identity_tokens (jti, identity_id, device_id, expires_at, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (jti, identity_id, device_id, expires_at, created_at))
+            conn.commit()
+
+    def revoke_token(self, jti: str):
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("UPDATE identity_tokens SET revoked = 1 WHERE jti = ?", (jti,))
+            conn.commit()
+
+    def is_token_revoked(self, jti: str) -> bool:
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("SELECT revoked FROM identity_tokens WHERE jti = ?", (jti,))
+            row = c.fetchone()
+            return row is None or bool(row[0])
 
     # --- Users ---
     def ensure_user(self, user_id: str, name: str = None):

@@ -1,5 +1,6 @@
-"""EUNICE v0.8 — Multi-User + Autonomous Discovery
-Associative memory, proactive retrieval, background daemon integration, onboarding.
+"""EUNICE v0.9 — Multi-User Identity + Autonomous Discovery
+Associative memory, proactive retrieval, background daemon integration, onboarding,
+identity/device model, and session-token auth.
 """
 import os
 import json
@@ -12,7 +13,8 @@ from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from config import BASE_DIR, DATA_DIR, VERSION, MODEL_NAME, MEMORY_LIMIT
-from core.auth import verify_token, get_current_user
+from core.auth import verify_token, get_current_user, get_auth_context, AuthContext
+from core.identity import IdentityManager
 from core.personality import load_personality, save_personality
 from core.inference import stream_chat, generate_non_stream
 from core.tool_router import ToolRouter
@@ -53,6 +55,7 @@ tools = ToolRouter()
 trails = TrailManager()
 daemon = BackgroundDaemon(check_interval=900)
 fact_extractor = FactExtractor(memory)
+identity_manager = IdentityManager()
 logger = logging.getLogger("eunice.api")
 
 # Start background daemon on startup
@@ -78,20 +81,35 @@ async def startup():
     print(f"Open: http://<this-ip>:8000")
 
 
-async def _resolve_user_id(request: Request) -> str:
-    """Resolve user_id from header or JSON body."""
-    # First try headers
-    user_id = request.headers.get("X-EUNICE-Device-ID") or request.headers.get("X-EUNICE-User-ID")
-    if user_id:
-        return user_id.strip()
-    # Try to read from body if not too late
+async def _resolve_user_id(request: Request, body: dict = None) -> str:
+    """Resolve identity_id from JWT, device header, or JSON body."""
+    # 1. Check Authorization header for JWT session token
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header[7:].strip()
+        identity = identity_manager.verify_session_token(token)
+        if identity:
+            return identity.identity_id
+
+    # 2. Try device header
+    device_id = request.headers.get("X-EUNICE-Device-ID") or request.headers.get("X-EUNICE-User-ID")
+    if device_id:
+        identity = identity_manager.get_identity_by_device(device_id.strip())
+        if identity:
+            return identity.identity_id
+
+    # 3. Try provided body or read from request
     try:
-        body = await request.json()
-        user_id = body.get("device_id") or body.get("user_id")
-        if user_id:
-            return user_id.strip()
+        if body is None:
+            body = await request.json()
+        device_id = body.get("device_id") or body.get("user_id")
+        if device_id:
+            identity = identity_manager.get_identity_by_device(device_id.strip())
+            if identity:
+                return identity.identity_id
     except Exception:
         pass
+
     return "ronny"
 
 
@@ -270,6 +288,127 @@ async def post_personality(request: Request, token: str = Depends(verify_token))
     return {"status": "saved", "personality": new_personality}
 
 
+# --- Identity & Access (v0.9) ---
+@app.post("/identity/create")
+async def identity_create(request: Request, token: str = Depends(verify_token)):
+    body = await request.json()
+    display_name = body.get("display_name", "").strip()
+    passphrase = body.get("passphrase", "").strip()
+    device_id = body.get("device_id", "").strip()
+    device_name = body.get("device_name", "").strip() or device_id
+    device_type = body.get("device_type", "unknown").strip()
+
+    if not display_name:
+        raise HTTPException(status_code=400, detail="display_name is required")
+    if not passphrase:
+        raise HTTPException(status_code=400, detail="passphrase is required")
+    if not device_id:
+        raise HTTPException(status_code=400, detail="device_id is required")
+
+    existing_device = identity_manager.get_identity_by_device(device_id)
+    if existing_device:
+        raise HTTPException(status_code=409, detail="Device already linked to an identity")
+
+    info = identity_manager.create_identity(
+        display_name=display_name,
+        passphrase=passphrase,
+        device_id=device_id,
+        device_name=device_name,
+        device_type=device_type,
+    )
+    session_token = identity_manager.create_session_token(info.identity_id, device_id)
+    return {
+        "identity_id": info.identity_id,
+        "device_id": info.device_id,
+        "display_name": info.display_name,
+        "is_admin": info.is_admin,
+        "token": session_token,
+    }
+
+
+@app.post("/identity/claim")
+async def identity_claim(request: Request, token: str = Depends(verify_token)):
+    body = await request.json()
+    identity_id = body.get("identity_id", "").strip()
+    passphrase = body.get("passphrase", "").strip()
+    device_id = body.get("device_id", "").strip()
+    device_name = body.get("device_name", "").strip() or device_id
+    device_type = body.get("device_type", "unknown").strip()
+
+    if not identity_id or not passphrase or not device_id:
+        raise HTTPException(status_code=400, detail="identity_id, passphrase, and device_id are required")
+
+    info = identity_manager.claim_identity(
+        identity_id=identity_id,
+        passphrase=passphrase,
+        device_id=device_id,
+        device_name=device_name,
+        device_type=device_type,
+    )
+    if not info:
+        raise HTTPException(status_code=401, detail="Invalid identity or passphrase")
+
+    session_token = identity_manager.create_session_token(info.identity_id, device_id)
+    return {
+        "identity_id": info.identity_id,
+        "device_id": info.device_id,
+        "display_name": info.display_name,
+        "is_admin": info.is_admin,
+        "token": session_token,
+    }
+
+
+@app.post("/identity/switch")
+async def identity_switch(request: Request, token: str = Depends(verify_token)):
+    body = await request.json()
+    device_id = body.get("device_id", "").strip()
+    identity_id = body.get("identity_id", "").strip()
+    passphrase = body.get("passphrase", "").strip()
+
+    if not device_id or not identity_id or not passphrase:
+        raise HTTPException(status_code=400, detail="device_id, identity_id, and passphrase are required")
+
+    info = identity_manager.switch_device_identity(device_id, identity_id, passphrase)
+    if not info:
+        raise HTTPException(status_code=401, detail="Invalid identity or passphrase")
+
+    session_token = identity_manager.create_session_token(info.identity_id, device_id)
+    return {
+        "identity_id": info.identity_id,
+        "device_id": info.device_id,
+        "display_name": info.display_name,
+        "is_admin": info.is_admin,
+        "token": session_token,
+    }
+
+
+@app.post("/identity/logout")
+async def identity_logout(request: Request, auth: AuthContext = Depends(get_auth_context)):
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header[7:].strip() if auth_header.lower().startswith("bearer ") else ""
+    if token:
+        identity_manager.revoke_session_token(token)
+    return {"logged_out": True}
+
+
+@app.get("/identity/me")
+async def identity_me(auth: AuthContext = Depends(get_auth_context)):
+    identity = identity_manager.store.get_identity(auth.identity_id)
+    return {
+        "identity_id": auth.identity_id,
+        "device_id": auth.device_id,
+        "display_name": auth.display_name,
+        "is_admin": auth.is_admin,
+        "auth_method": auth.auth_method,
+        "profile": identity,
+    }
+
+
+@app.get("/devices")
+async def list_devices(auth: AuthContext = Depends(get_auth_context)):
+    return {"devices": identity_manager.list_devices(auth.identity_id)}
+
+
 # --- Onboarding Helper ---
 async def _handle_onboarding(user_id: str, user_msg: str, session: str) -> str:
     """Process an onboarding exchange and return the next response."""
@@ -330,8 +469,7 @@ async def chat(request: Request, background_tasks: BackgroundTasks, token: str =
     body = await request.json()
     user_msg = body.get("message", "").strip()
     session = body.get("session", "default").strip()
-    user_id = body.get("device_id") or body.get("user_id") or request.headers.get("X-EUNICE-Device-ID") or "ronny"
-    user_id = user_id.strip()
+    user_id = await _resolve_user_id(request, body)
 
     if not user_msg:
         return {"reply": "[No message received]"}
@@ -493,8 +631,7 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
     body = await request.json()
     user_msg = body.get("message", "").strip()
     session = body.get("session", "default").strip()
-    user_id = body.get("device_id") or body.get("user_id") or request.headers.get("X-EUNICE-Device-ID") or "ronny"
-    user_id = user_id.strip()
+    user_id = await _resolve_user_id(request, body)
 
     logger.info(f"[CHAT] user={user_id} session={session} msg={user_msg!r}")
 

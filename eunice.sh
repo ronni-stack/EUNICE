@@ -1,5 +1,5 @@
 #!/bin/bash
-# EUNICE v0.8 — Unified CLI
+# EUNICE v0.9 — Unified CLI
 # Usage: ./eunice.sh [setup|launch|test|backup|help]
 
 set -e
@@ -16,7 +16,7 @@ API_KEY=$(python3 -c "import config; print(config.API_KEY)" 2>/dev/null || echo 
 BASE="http://localhost:8000"
 
 show_help() {
-    echo "EUNICE v0.8 Unified CLI"
+    echo "EUNICE v0.9 Unified CLI"
     echo ""
     echo "Usage: ./eunice.sh <command>"
     echo ""
@@ -37,7 +37,7 @@ show_help() {
 
 cmd_setup() {
     echo "========================================="
-    echo "  EUNICE v0.8 — Setup"
+    echo "  EUNICE v0.9 — Setup"
     echo "========================================="
 
     RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
@@ -77,7 +77,8 @@ cmd_setup() {
         pydantic pydantic-settings \
         sqlalchemy alembic \
         rich typer \
-        pytest pytest-asyncio
+        pytest pytest-asyncio \
+        bcrypt pyjwt
 
     echo ""
     echo "[5/5] Creating directories..."
@@ -129,7 +130,7 @@ cmd_launch() {
 
     echo ""
     echo "╔══════════════════════════════════════════╗"
-    echo "║     EUNICE v0.8 Launching...             ║"
+    echo "║     EUNICE v0.9 Launching...             ║"
     echo "║     Model: $MODEL                        ║"
     echo "║     API: http://0.0.0.0:8000             ║"
     echo "╚══════════════════════════════════════════╝"

@@ -3,7 +3,10 @@ import pytest
 import memory.sqlite_store
 import memory.vector_store
 import memory.trail_store
+import config as config_module
 from memory.manager import MemoryManager
+
+config_module.JWT_SECRET = "test-secret-32-bytes-long-1234567890"
 
 @pytest.fixture
 def mm(tmp_path):

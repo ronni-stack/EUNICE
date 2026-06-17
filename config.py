@@ -1,5 +1,6 @@
-"""EUNICE v0.8 — Centralized Configuration (multi-user)"""
+"""EUNICE v0.9 — Centralized Configuration (multi-user + identity)"""
 import os
+import secrets
 from pathlib import Path
 
 # Base paths
@@ -18,6 +19,19 @@ MEMORY_LIMIT = int(os.getenv("EUNICE_MEMORY_LIMIT", "20"))
 
 # Auth
 API_KEY = os.getenv("EUNICE_API_KEY", "eunice-local-dev-key-2026")
+
+# JWT secret: prefer env, then persisted file, then generate once
+_JWT_SECRET_FILE = DATA_DIR / ".jwt_secret"
+if os.getenv("EUNICE_JWT_SECRET"):
+    JWT_SECRET = os.getenv("EUNICE_JWT_SECRET")
+elif _JWT_SECRET_FILE.exists():
+    JWT_SECRET = _JWT_SECRET_FILE.read_text().strip()
+else:
+    JWT_SECRET = secrets.token_urlsafe(32)
+    _JWT_SECRET_FILE.write_text(JWT_SECRET)
+
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRATION_HOURS = int(os.getenv("EUNICE_JWT_EXPIRATION_HOURS", "168"))
 
 # Memory
 DB_PATH = DATA_DIR / "eunice_memory.db"
@@ -47,4 +61,4 @@ RISK_MEDIUM = {"add_event", "send_email_draft", "self_update"}
 RISK_HIGH = {"run_code", "get_balance"}
 RISK_CRITICAL = {"transfer_funds", "delete_file", "share_data"}
 
-VERSION = "0.8"
+VERSION = "0.9"
