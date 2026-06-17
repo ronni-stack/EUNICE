@@ -1074,6 +1074,61 @@ async def research_endpoint(request: Request, token: str = Depends(verify_token)
         raise HTTPException(status_code=500, detail=f"Research failed: {e}")
 
 
+# --- File Manager ---
+@app.get("/files")
+async def list_files(request: Request, path: str = "", token: str = Depends(verify_token)):
+    """List files in the user's sandboxed workspace."""
+    from core.file_manager import FileManager
+    user_id = await _resolve_user_id(request)
+    try:
+        fm = FileManager(user_id)
+        return {"entries": fm.list(path)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/files/read")
+async def read_file(request: Request, path: str, token: str = Depends(verify_token)):
+    """Read a file from the user's sandboxed workspace."""
+    from core.file_manager import FileManager
+    user_id = await _resolve_user_id(request)
+    try:
+        fm = FileManager(user_id)
+        return {"content": fm.read(path)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/files/write")
+async def write_file(request: Request, token: str = Depends(verify_token)):
+    """Write or append to a file in the user's sandboxed workspace."""
+    from core.file_manager import FileManager
+    user_id = await _resolve_user_id(request)
+    body = await request.json()
+    path = body.get("path", "")
+    content = body.get("content", "")
+    mode = body.get("mode", "write")  # write | append
+
+    try:
+        fm = FileManager(user_id)
+        result = fm.write(path, content, mode=mode)
+        return {"result": result}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/files")
+async def delete_file(request: Request, path: str, token: str = Depends(verify_token)):
+    """Delete a file or directory in the user's sandboxed workspace."""
+    from core.file_manager import FileManager
+    user_id = await _resolve_user_id(request)
+    try:
+        fm = FileManager(user_id)
+        return fm.delete(path, confirmed=True)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # --- Health & Sessions ---
 @app.get("/health")
 async def health():

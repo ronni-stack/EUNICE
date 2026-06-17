@@ -9,7 +9,9 @@ DATA_DIR = BASE_DIR / "data"
 TOOLS_DIR = BASE_DIR / "tools"
 BACKUP_DIR = BASE_DIR / "backups"
 NOTES_DIR = DATA_DIR / "notes"
+FILES_DIR = DATA_DIR / "files"
 NOTES_DIR.mkdir(parents=True, exist_ok=True)
+FILES_DIR.mkdir(parents=True, exist_ok=True)
 
 # Inference
 OLLAMA_URL = os.getenv("EUNICE_OLLAMA_URL", "http://localhost:11434")
