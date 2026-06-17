@@ -21,6 +21,7 @@ from core.tool_router import ToolRouter
 from core.background_daemon import BackgroundDaemon
 from core.onboarding import OnboardingEngine
 from core.fact_extractor import FactExtractor
+from core.tone import format_tone_instruction
 from memory.manager import MemoryManager
 from memory.trail_manager import TrailManager
 
@@ -204,13 +205,17 @@ async def generate_dynamic_denial(user_msg: str) -> str:
 # --- Single System Message Builder with Trail Context ---
 def build_system_message(personality: str, intent: str, user_msg: str,
                          facts: dict, trail_context: str = "", tools: list = None,
-                         user_name: str = "the user") -> str:
+                         user_name: str = "the user", tone: dict = None) -> str:
     """Build ONE system message with identity, personality, voice, context, and rules."""
 
     # 1. IDENTITY (always first)
     identity = "You are EUNICE. Your name is EUNICE. You are a personal assistant. You never deny having a name or identity. This is who you are — not information the user provided."
 
-    # 2. VOICE EXAMPLES (concrete samples of how EUNICE speaks)
+    # 2. TONE ADAPTATION
+    if tone:
+        parts.append(format_tone_instruction(tone))
+
+    # 3. VOICE EXAMPLES (concrete samples of how EUNICE speaks)
     voice_examples = f"""
 How EUNICE speaks:
 - "Hey {user_name}. What's up?"
@@ -229,12 +234,12 @@ How EUNICE does NOT speak:
 
     parts = [identity, personality, voice_examples]
 
-    # 3. TRAIL CONTEXT
+    # 4. TRAIL CONTEXT
     if trail_context:
         parts.append(trail_context)
         parts.append("Rule for facts: Only use what the user explicitly told you. If they didn't mention something, admit you don't know. Never invent.")
 
-    # 4. RELEVANT FACTS
+    # 5. RELEVANT FACTS
     if intent == "fact_recall" and facts:
         relevant = []
         query_words = set(user_msg.lower().split())
@@ -245,19 +250,19 @@ How EUNICE does NOT speak:
         if relevant:
             parts.append("Known facts:\n" + "\n".join([f"- {f}" for f in relevant[:3]]))
 
-    # 5. TOOLS
+    # 6. TOOLS
     elif intent == "tool_use" and tools:
         tool_text = "Available tools:\n" + "\n".join([f"- {t['name']}: {t['description']}" for t in tools])
         tool_text += "\nTo use a tool, respond with JSON: {\"tool\": \"name\", \"params\": {}}"
         parts.append(tool_text)
 
-    # 6. GENERAL CHAT
+    # 7. GENERAL CHAT
     elif intent == "general_chat" and facts:
         recent = list(facts.values())[:2]
         if recent:
             parts.append("Recent context:\n" + "\n".join([f"- {f}" for f in recent]))
 
-    # 7. ANTI-GENERIC RULES
+    # 8. ANTI-GENERIC RULES
     parts.append("Rule: Never start with 'It seems like...' or 'I understand that...' Just answer directly.")
     parts.append("Rule: Never end with 'If there's anything else...' or 'Feel free to ask!' Just stop when you're done.")
     parts.append(f"Rule: Speak to {user_name} like you've worked together for years. No introductions, no explanations.")
@@ -586,8 +591,10 @@ async def chat(request: Request, background_tasks: BackgroundTasks, token: str =
         intent = "tool_use"
 
     personality = load_personality(user_name=user_name)
+    tone = memory.get_user_tone(user_id)
     system_content = build_system_message(
-        personality, intent, user_msg, all_facts, trail_context, available_tools, user_name=user_name
+        personality, intent, user_msg, all_facts, trail_context, available_tools,
+        user_name=user_name, tone=tone
     )
 
     messages = [{"role": "system", "content": system_content}]
@@ -829,8 +836,10 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
     available_tools = tools.get_available_tools()
 
     personality = load_personality(user_name=user_name)
+    tone = memory.get_user_tone(user_id)
     system_content = build_system_message(
-        personality, intent, user_msg, all_facts, trail_context, available_tools, user_name=user_name
+        personality, intent, user_msg, all_facts, trail_context, available_tools,
+        user_name=user_name, tone=tone
     )
 
     messages = [{"role": "system", "content": system_content}]

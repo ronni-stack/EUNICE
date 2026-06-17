@@ -33,9 +33,18 @@ class SQLiteStore:
                     last_active TEXT DEFAULT CURRENT_TIMESTAMP,
                     rapport_level REAL DEFAULT 0,
                     communication_style TEXT,
-                    onboarding_complete BOOLEAN DEFAULT FALSE
+                    onboarding_complete BOOLEAN DEFAULT FALSE,
+                    tone_formality REAL DEFAULT 0.5,
+                    tone_verbosity REAL DEFAULT 0.5,
+                    tone_humor REAL DEFAULT 0.5,
+                    tone_proactivity REAL DEFAULT 0.5
                 )
             """)
+
+            # Migrate tone columns if missing
+            for col in ["tone_formality", "tone_verbosity", "tone_humor", "tone_proactivity"]:
+                if not self._column_exists(conn, "users", col):
+                    c.execute(f"ALTER TABLE users ADD COLUMN {col} REAL DEFAULT 0.5")
 
             # Profile gaps table
             c.execute("""
@@ -349,6 +358,39 @@ class SQLiteStore:
     def update_user(self, user_id: str, **fields):
         allowed = {"name", "preferred_name", "rapport_level", "communication_style", "onboarding_complete", "last_active"}
         updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            c.execute(f"UPDATE users SET {set_clause} WHERE id = ?", (*updates.values(), user_id))
+            conn.commit()
+
+    def get_user_tone(self, user_id: str) -> dict:
+        """Return the user's tone profile (0-1 scale)."""
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute(
+                "SELECT tone_formality, tone_verbosity, tone_humor, tone_proactivity FROM users WHERE id = ?",
+                (user_id,)
+            )
+            row = c.fetchone()
+            if row:
+                return {
+                    "formality": row[0] if row[0] is not None else 0.5,
+                    "verbosity": row[1] if row[1] is not None else 0.5,
+                    "humor": row[2] if row[2] is not None else 0.5,
+                    "proactivity": row[3] if row[3] is not None else 0.5,
+                }
+            return {"formality": 0.5, "verbosity": 0.5, "humor": 0.5, "proactivity": 0.5}
+
+    def update_user_tone(self, user_id: str, **tones):
+        """Update tone scores. Values are clamped to [0, 1]."""
+        allowed = {"tone_formality", "tone_verbosity", "tone_humor", "tone_proactivity"}
+        updates = {}
+        for k, v in tones.items():
+            if k in allowed and v is not None:
+                updates[k] = max(0.0, min(1.0, float(v)))
         if not updates:
             return
         with sqlite3.connect(self.db_path) as conn:

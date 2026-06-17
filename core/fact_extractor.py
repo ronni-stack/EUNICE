@@ -1,10 +1,11 @@
-"""EUNICE v0.8 — Implicit Fact Extractor
-Extracts facts, relationships, and profile gaps from every exchange.
+"""EUNICE v0.9 — Implicit Fact Extractor
+Extracts facts, relationships, profile gaps, and tone signals from every exchange.
 """
 import json
 import re
 from typing import Optional
 from core.inference import generate_non_stream
+from core.tone import analyze_message
 from memory.manager import MemoryManager
 
 DEFAULT_USER_ID = "ronny"
@@ -100,4 +101,16 @@ class FactExtractor:
             for gap in gaps_filled:
                 self.memory.update_profile_gap(user_id, gap, known=True, confidence=0.8)
 
-        print(f"[EXTRACT] user={user_id}: {len(facts)} facts, {len(relationships)} relationships, gaps={gaps_filled}")
+        # Update tone profile from user message
+        tone_deltas = analyze_message(user_msg)
+        current_tone = self.memory.get_user_tone(user_id)
+        updated = {}
+        for db_key, delta in tone_deltas.items():
+            dim = db_key.replace("tone_", "")
+            if dim in current_tone and delta != 0:
+                # Move current score toward new signal by 20% of the delta
+                updated[db_key] = current_tone[dim] + delta * 0.2
+        if updated:
+            self.memory.update_user_tone(user_id, **updated)
+
+        print(f"[EXTRACT] user={user_id}: {len(facts)} facts, {len(relationships)} relationships, gaps={gaps_filled}, tone={updated}")

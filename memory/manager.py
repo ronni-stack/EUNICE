@@ -24,6 +24,12 @@ class MemoryManager:
     def update_user(self, user_id: str, **fields):
         return self.sqlite.update_user(user_id, **fields)
 
+    def get_user_tone(self, user_id: str) -> dict:
+        return self.sqlite.get_user_tone(user_id)
+
+    def update_user_tone(self, user_id: str, **tones):
+        return self.sqlite.update_user_tone(user_id, **tones)
+
     def is_onboarded(self, user_id: str) -> bool:
         user = self.sqlite.get_user(user_id)
         if not user:
