@@ -113,7 +113,7 @@ async def generate_non_stream(messages: list = None, prompt: str = None, format_
     logger.debug(f"[OLLAMA] generate_non_stream prompt={prompt[:200]!r}")
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:  # CHANGED: was hardcoded 30.0
             resp = await client.post(url, json=payload)
             resp.raise_for_status()
             data = resp.json()

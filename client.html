@@ -32,6 +32,8 @@
       --header-height: 56px;
       --input-height: 80px;
       --shadow: 0 4px 24px rgba(0,0,0,0.4);
+      .bubble pre { white-space: pre; word-wrap: normal; overflow-x: auto; }
+      .bubble pre code { white-space: pre; word-wrap: normal; }
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -213,8 +215,26 @@
     .bubble ul, .bubble ol { margin: 12px 0 12px 20px; }
     .bubble li { margin-bottom: 4px; }
     .bubble code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; background: rgba(255,255,255,0.08); padding: 2px 5px; border-radius: 4px; font-size: .9em; }
-    .bubble pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: var(--radius-md); margin: 12px 0; overflow: hidden; }
-    .bubble pre code { background: transparent; padding: 16px; display: block; overflow-x: auto; font-size: 13px; line-height: 1.5; }
+    .bubble pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      margin: 12px 0;
+      overflow: hidden;
+      white-space: pre;
+      word-wrap: normal;
+      overflow-x: auto;
+    }
+    .bubble pre code {
+      background: transparent;
+      padding: 16px;
+      display: block;
+      overflow-x: auto;
+      font-size: 13px;
+      line-height: 1.5;
+      white-space: pre;
+      word-wrap: normal;
+    }
     .code-block-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: rgba(255,255,255,0.03); border-bottom: 1px solid var(--border); font-size: 12px; color: var(--text-muted); }
     .code-block-header button { padding: 5px; border-radius: 6px; color: var(--text-muted); display: flex; align-items: center; justify-content: center; }
     .code-block-header button:hover { background: var(--surface-active); color: var(--text); }
@@ -354,6 +374,7 @@
       #chat-title { max-width: 150px; }
     }
   </style>
+<base target="_blank">
 </head>
 <body>
   <div id="loading-overlay"><div class="loader"></div></div>
@@ -744,8 +765,17 @@
     return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
-  // Simple markdown parser
+  // Improved markdown parser with formatting fixes
   function renderMarkdown(text) {
+    // Pre-process: fix common model formatting errors
+    text = text.replace(/([a-zA-Z0-9_])\bExample usage:/g, '$1\n\nExample usage:');
+    text = text.replace(/([a-zA-Z0-9_])\bUsage:/g, '$1\n\nUsage:');
+    text = text.replace(/([a-zA-Z0-9_])\bNote:/g, '$1\n\nNote:');
+    text = text.replace(/([a-zA-Z0-9_])\bWarning:/g, '$1\n\nWarning:');
+    text = text.replace(/([a-zA-Z0-9_])\bTODO:/g, '$1\n\nTODO:');
+    // Fix missing newlines before comments in code
+    text = text.replace(/([a-zA-Z0-9_)])# /g, '$1\n# ');
+
     // Code blocks
     text = text.replace(/```(\w*)?\n([\s\S]*?)```/g, (match, lang, code) => {
       lang = lang || 'text';
@@ -753,25 +783,30 @@
       const copyIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
       return `<div class="code-block"><div class="code-block-header"><span>${lang}</span><button onclick="copyCode(this)" title="Copy code">${copyIcon}</button></div><pre><code class="language-${lang}">${escaped}</code></pre></div>`;
     });
+
     // Inline code
     text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+
     // Links
     text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
     text = text.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+
     // Bold/italic
     text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     text = text.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-    text = text.replace(/__([^_]+)__/g, '<strong>$1</strong>');
-    text = text.replace(/_([^_]+)_/g, '<em>$1</em>');
+
     // Headers
     text = text.replace(/^### (.*$)/gim, '<h3>$1</h3>');
     text = text.replace(/^## (.*$)/gim, '<h2>$1</h2>');
     text = text.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+
     // Lists
     text = text.replace(/^\s*[-*+] (.*$)/gim, '<li>$1</li>');
     text = text.replace(/(<li>.*<\/li>\n?)+/g, match => `<ul>${match}</ul>`);
+
     // Blockquotes
     text = text.replace(/^> (.*$)/gim, '<blockquote>$1</blockquote>');
+
     // Paragraphs
     const paragraphs = text.split(/\n\n+/).map(p => {
       p = p.trim();
@@ -779,8 +814,9 @@
       if (p.startsWith('<') && (p.endsWith('>') || p.includes('</'))) return p;
       return `<p>${p.replace(/\n/g, '<br>')}</p>`;
     });
+
     return paragraphs.join('');
-  }
+}
 
   const COPY_ICON_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
   const CHECK_ICON_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
@@ -968,6 +1004,7 @@
   }
 
   // ─── Streaming Chat ───
+    // ─── Streaming Chat ───
   async function sendMessage() {
     const text = input.value.trim();
     if (!text || isStreaming) return;
@@ -983,11 +1020,16 @@
     if (!currentSession) currentSession = 'session-' + Date.now();
     localStorage.setItem('eunice_current_session', currentSession);
 
+    // Abort previous request if any, then create new controller
+    if (currentController) currentController.abort();
+    currentController = new AbortController();
+
     try {
       const resp = await fetch(`${API_BASE}/chat/stream`, {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ message: text, session: currentSession })
+        body: JSON.stringify({ message: text, session: currentSession }),
+        signal: currentController.signal
       });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
@@ -997,40 +1039,73 @@
       const decoder = new TextDecoder();
       let full = '';
       let bubbleCreated = false;
+      let sseBuffer = '';  // Buffer for proper SSE parsing
       typingRow.classList.remove('active');
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n\n');
+        sseBuffer += decoder.decode(value, { stream: true });
+        
+        // Split by double newline for proper SSE event boundaries
+        const events = sseBuffer.split('\n\n');
+        sseBuffer = events.pop() || '';  // Keep incomplete event in buffer
+        
+        for (const event of events) {
+          const lines = event.split('\n');
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.error) {
+                if (!bubbleCreated) { appendMessage(data.error, 'ai'); bubbleCreated = true; }
+                else updateStreamingBubble(data.error);
+                finalizeStreamingBubble();
+                break;
+              }
+              if (data.token !== undefined) {
+                if (!bubbleCreated) { appendMessage(data.token, 'ai', { streaming: true }); bubbleCreated = true; }
+                else {
+                  full += data.token;
+                  updateStreamingBubble(full);
+                }
+              }
+              if (data.done) {
+                if (bubbleCreated) finalizeStreamingBubble();
+                else if (data.full) appendMessage(data.full, 'ai');
+                full = data.full || full;
+              }
+            } catch (e) { console.error('parse error', e); }
+          }
+        }
+      }
+      // Process any remaining buffered data
+      if (sseBuffer.trim()) {
+        const lines = sseBuffer.split('\n');
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
           try {
             const data = JSON.parse(line.slice(6));
-            if (data.error) {
-              if (!bubbleCreated) { appendMessage(data.error, 'ai'); bubbleCreated = true; }
-              else updateStreamingBubble(data.error);
-              finalizeStreamingBubble();
-              break;
+            if (data.token !== undefined && !bubbleCreated) {
+              appendMessage(data.token, 'ai', { streaming: true });
+              bubbleCreated = true;
+            } else if (data.token !== undefined) {
+              full += data.token;
+              updateStreamingBubble(full);
             }
-            if (data.token !== undefined) {
-              if (!bubbleCreated) { appendMessage(data.token, 'ai', { streaming: true }); bubbleCreated = true; }
-              else {
-                full += data.token;
-                updateStreamingBubble(full);
-              }
-            }
-            if (data.done) {
-              if (bubbleCreated) finalizeStreamingBubble();
-              else if (data.full) appendMessage(data.full, 'ai');
-              full = data.full || full;
-            }
-          } catch (e) { console.error('parse error', e); }
+            if (data.done) finalizeStreamingBubble();
+          } catch (e) {}
         }
       }
       await loadSessions();
     } catch (e) {
+      if (e.name === 'AbortError') {
+        // User initiated new message, don't show error
+        typingRow.classList.remove('active');
+        isStreaming = false;
+        sendBtn.disabled = false;
+        return;
+      }
       typingRow.classList.remove('active');
       appendMessage(`Error: ${e.message}`, 'ai');
       showToast(e.message, 'error');
@@ -1039,6 +1114,7 @@
       sendBtn.disabled = false;
       typingRow.classList.remove('active');
       finalizeStreamingBubble();
+      currentController = null;
       if (voiceEnabled) {
         const lastAi = messagesEl.querySelectorAll('.message-row.ai .bubble');
         if (lastAi.length) speakMessage(lastAi[lastAi.length - 1].closest('.message-row').querySelector('.message-actions button:last-child'));
@@ -1047,16 +1123,16 @@
   }
 
   sendBtn.addEventListener('click', sendMessage);
-  input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
-  input.addEventListener('input', () => { input.rows = Math.min(6, Math.max(1, input.value.split('\n').length)); });
+input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+input.addEventListener('input', () => { input.rows = Math.min(6, Math.max(1, input.value.split('\n').length)); });
 
-  // ─── Capability cards ───
-  document.querySelectorAll('.capability-card').forEach(card => {
-    card.addEventListener('click', () => {
-      input.value = card.dataset.prompt;
-      input.focus();
-    });
+// ─── Capability cards ───
+document.querySelectorAll('.capability-card').forEach(card => {
+  card.addEventListener('click', () => {
+    input.value = card.dataset.prompt;
+    input.focus();
   });
+});
 
   // ─── Uploads ───
   const fileInput = document.getElementById('file-input');
@@ -1185,7 +1261,9 @@
     try {
       const resp = await fetch(`${API_BASE}/files/read?path=${encodeURIComponent(path)}`, { headers: getHeaders('') });
       const data = await resp.json();
-      input.value = `Here's the content of ${path}:\n\n${data.content.slice(0, 2000)}${data.content.length > 2000 ? '\n\n[truncated]' : ''}`;
+      input.value = `Here's the content of ${path}:
+
+${data.content.slice(0, 2000)}${data.content.length > 2000 ? '[truncated]' : ''}`;
       closeModal('files-overlay');
       input.focus();
     } catch (e) { showToast(e.message, 'error'); }
@@ -1201,7 +1279,6 @@
 
   async function deleteDoc(hash) {
     if (!confirm('Delete this document?')) return;
-    // Document delete endpoint not implemented; skip
     showToast('Document delete not yet implemented', 'error');
   }
 

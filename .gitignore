@@ -3,17 +3,21 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
-.Python
-
-# Virtual environment
 venv/
 .env
+*.egg-info/
+.pytest_cache/
 
-# Data and generated files
+# Data & models
 data/
+!data/.gitkeep
 backups/
 *.db
+*.db-journal
+chroma/
 *.log
+*.gguf
+*.bin
 
 # IDE
 .vscode/
@@ -24,3 +28,9 @@ backups/
 # OS
 .DS_Store
 Thumbs.db
+
+# Training
+eunice_lora_adapter/
+training/
+
+thoughts.md

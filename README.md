@@ -1,141 +1,80 @@
-# EUNICE v0.9 — Personal AI Assistant (Multi-User Identity + Autonomous Discovery)
+# EUNICE
 
-EUNICE is a locally-hosted AI assistant with persistent associative memory, risk-tiered tool execution, autonomous user profiling, document understanding, internet research, and coding assistance.
+> Your local, private AI with persistent memory, risk-tiered tools, and autonomous user profiling.
 
-## What's New in v0.9
+EUNICE is a locally-hosted AI assistant that runs entirely on your hardware. It remembers your context across conversations, learns your preferences over time, and can research, code, manage files, and ingest documents — without sending your data to the cloud.
 
-- **Identity & device model**: People and devices are separate. One identity can be used on multiple devices; one device can switch between identities.
-- **Session-token auth**: Log in with a passphrase to get a JWT session token, or continue using the static API key.
-- **Dynamic tone adaptation**: EUNICE learns and mirrors your formality, verbosity, humor, and proactivity over time.
-- **Document ingestion (RAG)**: Upload PDF, TXT, or MD files; EUNICE retrieves relevant excerpts during chat.
-- **Internet research**: Ask EUNICE to search the web, fetch pages, and summarize with citations.
-- **File manager**: Sandboxed read/write/append/list/delete for files in your per-user workspace.
-- **Coding assistant**: Generate, edit, analyze, and run Python code in a sandboxed workspace.
-- **Multi-user foundation**: Each device/browser gets an isolated user profile by default.
-- **Autonomous onboarding**: EUNICE learns your name, work, location, and preferences through natural chat.
-- **Confidence-based memory**: Facts are stored with confidence scores, source tags, and reinforcement counts.
-- **Relationship graph**: People, places, and things are linked to you with typed relationships.
-- **Implicit learning**: Every exchange is background-processed for extractable facts.
-- **Generic personality**: Works for any user, not hardcoded to a single person.
-
-## Hardware
-
-- Old laptop (8GB RAM) running Ubuntu from external SSD
-- Phone connects via home Wi-Fi
-- Main laptop (16GB) remains free for your work
-- Raspberry Pi 5 (8GB) for a standalone device
+---
 
 ## Quick Start
 
-EUNICE uses a single unified CLI script: `./eunice.sh`.
-
-### 1. Setup (one time)
+### One-line install
 
 ```bash
-cd ~/EUNICE_MASTER
-./eunice.sh setup
+curl -fsSL https://raw.githubusercontent.com/ronni-stack/EUNICE/main/install.sh | bash
 ```
 
-This installs system packages, Ollama, Python dependencies, and pulls the AI models.
-
-### 2. Start EUNICE Server
+### Or manually
 
 ```bash
+git clone https://github.com/ronni-stack/EUNICE.git ~/EUNICE_MASTER
 cd ~/EUNICE_MASTER
+pip install -r requirements.txt
 ./eunice.sh launch
 ```
 
-This automatically starts Ollama if it isn't already running, then launches the FastAPI server.
-If `venv/` is missing, `launch` will run `setup` first.
+Then open `http://<this-machine-ip>:8000` in your browser.
 
-### 3. Open the Client
+Find your IP with: `hostname -I`
 
-On your phone or laptop browser:
+---
 
-```
-http://<this-machine-ip>:8000
-```
+## Requirements
 
-Find the IP by running `hostname -I` on the server machine.
+| Spec | Minimum | Recommended |
+|------|---------|-------------|
+| **RAM** | 8 GB | 16 GB |
+| **Storage** | 10 GB free | 20 GB free (NVMe) |
+| **OS** | Ubuntu 22.04+ / Debian | Any modern Linux |
+| **CPU** | Any x86_64 | Intel i7 / AMD Ryzen |
+| **GPU** | Optional | NVIDIA with 8GB+ VRAM |
 
-The first time you open the client, you'll see a login screen:
+**Note:** EUNICE runs on CPU. A GPU accelerates inference but is not required.
 
-- **Create Identity** — set a display name + passphrase for a new profile.
-- **Claim Identity** — enter an existing identity ID + passphrase to link another device.
+---
 
-The static API key (set in `config.py` or `EUNICE_API_KEY`) still works for backward compatibility.
+## What Makes EUNICE Different
 
-## CLI Commands
+| Feature | EUNICE | ChatGPT / Claude |
+|---------|--------|------------------|
+| **Data privacy** | 100% local. Your data never leaves your machine. | Cloud-only; data processed externally |
+| **Persistent memory** | Associative trails + SQLite + ChromaDB across all sessions | Per-conversation context window |
+| **Autonomous profiling** | Learns your name, work, tone, and preferences through chat | No persistent user model |
+| **Risk-tiered tools** | Low-risk auto-executes; critical requires confirmation | No local tool execution |
+| **Document ingestion** | Upload PDF/TXT/MD; RAG retrieval injected into context | File upload (cloud) |
+| **Internet research** | Built-in web search + citation | Built-in |
+| **Coding assistant** | Generate, edit, analyze, and run Python locally | Cloud execution |
+| **Cross-device identity** | One identity, multiple devices, local pairing | Account-based (cloud) |
 
-| Command | Description |
-|---|---|
-| `./eunice.sh setup` | Install dependencies, Ollama, models, and create venv |
-| `./eunice.sh launch` | Start the EUNICE server (auto-runs setup if needed) |
-| `./eunice.sh test` | Run pytest + smoke tests against a running server |
-| `./eunice.sh backup` | Create a timestamped backup of data and code |
-| `./eunice.sh help` | Show help |
+---
 
-Legacy scripts (`launch.sh`, `setup.sh`, `test_eunice_full.sh`, `backup.sh`) still work as wrappers around `./eunice.sh`.
+## Features
 
-## API Endpoints
+### Persistent Associative Memory
+EUNICE stores facts, relationships, and conversation trails in SQLite and ChromaDB. It recalls context across sessions without stuffing the entire history into the prompt.
 
-### Chat
-- `POST /chat/stream` — main streaming chat endpoint
-- `POST /chat` — non-streaming chat
-
-### Identity & Access
-- `POST /identity/create` — create a new identity + first device
-- `POST /identity/claim` — link a new device to an existing identity
-- `POST /identity/switch` — switch a device to a different identity
-- `POST /identity/logout` — revoke session token
-- `GET /identity/me` — current identity info
-- `GET /devices` — list devices for current identity
-
-### Memory
-- `GET /sessions`
-- `GET /history/{session}`
-- `DELETE /sessions/{session}`
-- `GET /facts`
-- `DELETE /facts/{key}`
-
-### Documents & Research
-- `POST /docs/upload?filename=...` — upload PDF/TXT/MD for RAG
-- `GET /docs` — list uploaded documents
-- `POST /research` — web search + summarize with citations
-
-### Files
-- `GET /files?path=...` — list files in user workspace
-- `GET /files/read?path=...` — read a file
-- `POST /files/write` — write or append to a file
-- `DELETE /files?path=...` — delete a file/directory
-
-### Coding
-- `POST /coder` — generate, edit, analyze, or run code
-
-### Other
-- `GET /health` — server status
-- `GET /trails`, `GET /trails/{id}` — associative memory trails
-- `GET /daemon/status`, `GET /daemon/alerts` — background daemon
-
-## Model Notes
-
-- Default: `phi4` (4B params, ~2.3GB download, best quality for 8GB)
-- Fallback: `llama3.2:3b` (faster, slightly less eloquent)
-- To switch models, edit `MODEL_NAME` in `config.py`
-
-## Capabilities
+### Autonomous Onboarding
+No forms. EUNICE learns your name, work, location, and preferences naturally through conversation.
 
 ### Dynamic Tone Adaptation
-EUNICE tracks four tone dimensions per identity:
+Tracks four dimensions per identity:
 - **Formality** (casual ↔ formal)
 - **Verbosity** (terse ↔ detailed)
 - **Humor** (dry ↔ playful)
 - **Proactivity** (reactive ↔ anticipatory)
 
-Tone is updated incrementally from your messages. No UI needed — it just works.
-
 ### Document Ingestion (RAG)
-Upload documents and ask questions about them:
+Upload PDF, TXT, or MD files. EUNICE chunks, embeds, and retrieves relevant excerpts during chat.
 
 ```bash
 curl -X POST "http://localhost:8000/docs/upload?filename=report.pdf" \
@@ -144,9 +83,9 @@ curl -X POST "http://localhost:8000/docs/upload?filename=report.pdf" \
   --data-binary @report.pdf
 ```
 
-Then chat: *"What does the report say about revenue?"*
-
 ### Internet Research
+Search the web, fetch pages, and summarize with citations.
+
 ```bash
 curl -X POST http://localhost:8000/research \
   -H "Authorization: Bearer $API_KEY" \
@@ -154,13 +93,8 @@ curl -X POST http://localhost:8000/research \
   -d '{"query": "latest Mars rover news", "max_results": 5}'
 ```
 
-Returns a summarized answer with `[Source N]` citations and source URLs.
-
-### File Manager
-Files are sandboxed to `data/files/{identity_id}/`. Supported operations via tool or API: read, write, append, list, mkdir, delete, search.
-
 ### Coding Assistant
-Generate or edit code, then run it in a sandboxed subprocess:
+Generate, edit, analyze, and run Python code in a sandboxed workspace.
 
 ```bash
 curl -X POST http://localhost:8000/coder \
@@ -174,80 +108,208 @@ curl -X POST http://localhost:8000/coder \
   }'
 ```
 
-Then run it:
+### File Manager
+Sandboxed read/write/append/list/delete in `data/files/{identity_id}/`.
 
-```bash
-curl -X POST http://localhost:8000/coder \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"action": "run", "filename": "fib.py"}'
+### Risk-Tiered Tool Execution
+| Tier | Tools | Behavior |
+|------|-------|----------|
+| **Low** | `network_scan`, `notes`, `get_weather` | Auto-execute |
+| **Medium** | `add_event`, `self_update` | Execute + log |
+| **High** | `run_code`, `get_balance` | Requires confirmation |
+| **Critical** | `transfer_funds`, `delete_file` | Always deny until biometric flow |
+
+### Intent Routing (v0.9.1)
+Structured intent classification replaces blunt keyword matching. EUNICE now understands:
+- **"Write code that..."** → `generate`
+- **"This code is wrong, fix it"** → `fix`
+- **"Explain this code"** → `analyze`
+- **"Run this code"** → `run`
+
+---
+
+## CLI Commands
+
+EUNICE uses a single unified CLI: `./eunice.sh`.
+
+| Command | Description |
+|---------|-------------|
+| `./eunice.sh setup` | Install deps, Ollama, Python venv, and models |
+| `./eunice.sh launch` | Start the EUNICE server (auto-runs setup if needed) |
+| `./eunice.sh test` | Run pytest + smoke tests against a running server |
+| `./eunice.sh backup` | Create a timestamped backup of data and code |
+| `./eunice.sh help` | Show help |
+
+---
+
+## Architecture
+
+```
+EUNICE/
+├── eunice.sh           # Unified CLI
+├── main.py             # FastAPI entry point
+├── config.py           # Central configuration
+├── client.html         # PWA frontend
+├── manifest.json       # PWA manifest
+├── sw.js               # Service worker (offline)
+├── personality.txt     # System prompt
+├── api/
+│   └── server.py       # FastAPI routes, chat, identity, tools
+├── core/
+│   ├── __init__.py
+│   ├── auth.py         # API key + JWT verification
+│   ├── identity.py     # Identity & device management
+│   ├── inference.py    # Ollama streaming wrapper
+│   ├── personality.py  # Prompt management
+│   ├── tool_router.py  # Risk-tiered tool execution
+│   ├── onboarding.py   # Progressive profiling engine
+│   ├── fact_extractor.py # Implicit fact extraction
+│   ├── tone.py         # Dynamic tone adaptation
+│   ├── ingestion.py    # Document RAG pipeline
+│   ├── research.py     # Web search + summarization
+│   ├── coder.py        # Code generation & sandbox execution
+│   ├── file_manager.py # Sandboxed file operations
+│   ├── intent.py       # Structured intent classification
+│   └── background_daemon.py # Proactive alerts & maintenance
+├── memory/
+│   ├── __init__.py
+│   ├── manager.py      # Unified memory facade
+│   ├── sqlite_store.py # SQLite: messages, sessions, facts, identities
+│   ├── vector_store.py # ChromaDB semantic search
+│   ├── trail_manager.py # Associative memory trails
+│   └── trail_store.py  # Trail persistence
+├── tools/              # Executable tool scripts
+├── docs/               # Migration guides & architecture docs
+└── tests/              # Pytest suite
 ```
 
-Dangerous patterns (network, shell, eval) are blocked before execution.
-
-## Files
-
-| File | Purpose |
-|------|---------|
-| `eunice.sh` | Unified CLI for setup, launch, test, and backup |
-| `main.py` | Entry point (starts FastAPI server) |
-| `api/server.py` | FastAPI routes, chat, identity, tools, files, coder, research |
-| `core/` | Auth, inference, tool router, onboarding, fact extractor, tone, ingestion, research, coder |
-| `memory/` | SQLite + ChromaDB memory, trails, user profiles, documents, research cache |
-| `tools/` | Executable tool scripts (notes, balance, file_manager, coder, etc.) |
-| `client.html` | Phone/chat interface with identity login |
-| `personality.txt` | System prompt / identity |
-| `data/eunice_memory.db` | SQLite conversation memory |
-| `data/chroma/` | Vector semantic memory |
-| `data/files/` | Per-user file workspace |
-| `data/eunice.log` | Runtime logs |
-
-## Data Layout
+### Data Layout
 
 ```
 data/
-├── eunice_memory.db      # SQLite: users, messages, sessions, facts, identities, devices, documents
-├── chroma/               # ChromaDB vector memory
-├── files/                # Per-user file workspaces
-├── notes/                # Per-user notes
-└── eunice.log            # Runtime logs
+├── eunice_memory.db    # SQLite: users, messages, sessions, facts, identities
+├── chroma/             # ChromaDB vector memory
+├── files/              # Per-user file workspaces
+├── notes/              # Per-user notes
+└── eunice.log          # Runtime logs
 ```
 
-## Backup
+---
 
-```bash
-./eunice.sh backup
-```
+## API Endpoints
 
-Backups save to `~/eunice_backups/`.
+### Chat
+- `POST /chat/stream` — Streaming chat (SSE)
+- `POST /chat` — Non-streaming chat
+
+### Identity & Access
+- `POST /identity/create` — Create identity + first device
+- `POST /identity/claim` — Link device to existing identity
+- `POST /identity/switch` — Switch device to another identity
+- `POST /identity/logout` — Revoke session token
+- `GET /identity/me` — Current identity info
+- `GET /devices` — List devices for current identity
+
+### Memory
+- `GET /sessions` — List sessions
+- `GET /history/{session}` — Get session history
+- `DELETE /sessions/{session}` — Delete session
+- `GET /facts` — List stored facts
+- `DELETE /facts/{key}` — Delete a fact
+
+### Documents & Research
+- `POST /docs/upload?filename=...` — Upload PDF/TXT/MD for RAG
+- `GET /docs` — List uploaded documents
+- `POST /research` — Web search + summarize with citations
+
+### Files
+- `GET /files?path=...` — List files in workspace
+- `GET /files/read?path=...` — Read a file
+- `POST /files/write` — Write or append to a file
+- `DELETE /files?path=...` — Delete a file/directory
+
+### Coding
+- `POST /coder` — Generate, edit, analyze, or run code
+
+### Other
+- `GET /health` — Server status
+- `GET /trails`, `GET /trails/{id}` — Associative memory trails
+- `GET /daemon/status`, `GET /daemon/alerts` — Background daemon
+
+---
+
+## Configuration
+
+Edit `config.py` or set environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `EUNICE_MODEL` | `phi4-mini:latest` | Ollama model to use |
+| `EUNICE_OLLAMA_URL` | `http://localhost:11434` | Ollama server URL |
+| `EUNICE_OLLAMA_TIMEOUT` | `300.0` | Request timeout (seconds) |
+| `EUNICE_API_KEY` | `eunice-local-dev-key-2026` | Static API key |
+| `EUNICE_MEMORY_LIMIT` | `20` | Recent messages to include |
+
+---
+
+## Model Notes
+
+- **Default:** `phi4-mini:latest` (~3.8B params, ~2.5GB, best for 8GB RAM)
+- **Alternative:** `llama3.2:3b` (faster, slightly less capable)
+- **Premium:** `phi4` (14B, ~10GB, requires 16GB+ RAM)
+
+To switch models, edit `MODEL_NAME` in `config.py` or set `EUNICE_MODEL`.
+
+---
 
 ## Logs
-
-Runtime logs are written to `data/eunice.log` and printed to stdout:
 
 ```bash
 tail -f data/eunice.log
 ```
 
 Useful grep patterns:
-- `[REQUEST]` / `[RESPONSE]` — all HTTP traffic
-- `[CHAT]` — chat messages, intents, tool calls
-- `[INFERENCE]` / `[OLLAMA]` — model requests and responses
-- `[SERVER ERROR]` / `[STREAM ERROR]` — errors
-- `[INGEST]` — document ingestion
-- `[RESEARCH]` — web research
+- `[REQUEST]` / `[RESPONSE]` — HTTP traffic
+- `[CHAT]` — Chat messages, intents, tool calls
+- `[INFERENCE]` / `[OLLAMA]` — Model requests/responses
+- `[SERVER ERROR]` / `[STREAM ERROR]` — Errors
+- `[INGEST]` — Document ingestion
+- `[RESEARCH]` — Web research
+
+---
 
 ## Troubleshooting
 
-- **Slow replies**: Switch to `llama3.2:3b` in `config.py`.
-- **Phone cannot connect**: Ensure both devices are on the same Wi-Fi. Check firewall with `sudo ufw allow 8000`.
-- **"Wrong API key"**: Set the same key in `config.py` (or `EUNICE_API_KEY` env var) and in the client Settings.
-- **Cross-device identity**: Use the login screen to create an identity on one device, then use **Claim Identity** on the other device with the same identity ID + passphrase.
+| Problem | Solution |
+|---------|----------|
+| **Slow replies** | Switch to `phi4-mini` or `llama3.2:3b` in `config.py`. Reduce `EUNICE_OLLAMA_TIMEOUT`. |
+| **Phone cannot connect** | Ensure both devices are on the same Wi-Fi. Run `sudo ufw allow 8000`. |
+| **"Wrong API key"** | Set the same key in `config.py` (or `EUNICE_API_KEY` env var) and in the client Settings. |
+| **Ollama timeout** | Increase `EUNICE_OLLAMA_TIMEOUT` in `config.py`. First request loads the model into RAM. |
+| **Cross-device identity** | Create an identity on one device, then use **Claim Identity** on the other with the same ID + passphrase. |
+
+---
 
 ## Roadmap
 
-- Phase 2 identity hardening: conflict resolution, per-identity tool permissions, guest mode.
-- Google OAuth provider (optional cloud identity).
-- Agentic reasoning loop (ReAct) + multi-step planning.
-- Calendar/reminders integration.
-- Custom LoRA fine-tuning.
+- [ ] Phase 2 identity hardening: conflict resolution, per-identity tool permissions, guest mode
+- [ ] Google OAuth provider (optional cloud identity)
+- [ ] Agentic reasoning loop (ReAct) + multi-step planning
+- [ ] Calendar / reminders integration
+- [ ] Custom LoRA fine-tuning pipeline
+- [ ] Docker support
+- [ ] Mobile app (iOS/Android)
+
+---
+
+## License
+
+AGPL-3.0. See [LICENSE](LICENSE).
+
+---
+
+## Contributing
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system design.
+
+Open an issue or PR. EUNICE is built for the community.

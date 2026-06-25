@@ -1,4 +1,4 @@
-const CACHE_NAME = 'eunice-v3';
+const CACHE_NAME = 'eunice-cache-v1';
 const urlsToCache = ['/'];
 
 self.addEventListener('install', event => {

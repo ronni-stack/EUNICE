@@ -26,6 +26,7 @@ from core.ingestion import IngestionPipeline
 from core.research import ResearchAssistant
 from memory.manager import MemoryManager
 from memory.trail_manager import TrailManager
+from core.intent import IntentClassifier
 
 app = FastAPI(title=f"EUNICE v{VERSION}")
 
@@ -766,161 +767,120 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
     user_name = _get_user_name(user_id)
 
     confirm_match = re.match(r'^confirm\s+(\w+)', user_msg.lower())
-    if confirm_match:
-        tool_name = resolve_tool_name(confirm_match.group(1))
+        # === INTENT CLASSIFICATION ===
+    classifier = IntentClassifier()
+    intent = classifier.classify(user_msg)
+    logger.info(f"[CHAT] user={user_id} intent={intent.type} subtype={intent.subtype} conf={intent.confidence}")
+
+    # === HANDLE TOOL CONFIRMATION ===
+    if intent.type == "tool_confirm":
+        tool_name = resolve_tool_name(intent.subtype)
         result = await tools.execute(tool_name, {"confirmed": True, "user_id": user_id})
         response = f"[Executed {tool_name}]: {result}" if not result.startswith("[PENDING:") else result
         return StreamingResponse(
-            iter([
-                f'data: {json.dumps({"token": response, "done": False})}\n\n',
-                f'data: {json.dumps({"done": True, "full": response})}\n\n'
-            ]),
+            iter([f'data: {json.dumps({"token": response, "done": False})}\n\n',
+                  f'data: {json.dumps({"done": True, "full": response})}\n\n']),
             media_type="text/event-stream"
         )
 
-    user_msg_lower = user_msg.lower()
-
-    coding_keywords = ["code", "script", "python", "function", "write a", "program"]
-    if any(word in user_msg_lower for word in ["balance", "account", "how much money", "bank"]) and not any(word in user_msg_lower for word in coding_keywords):
-        logger.info(f"[CHAT] user={user_id} intent=tool_balance")
-        result = await tools.execute("get_balance", {"user_id": user_id})
-        logger.info(f"[CHAT] user={user_id} balance_result={result[:120]!r}")
+    # === HANDLE TOOL USE ===
+    if intent.type == "tool_use":
+        tool_name = intent.subtype
+        result = await tools.execute(tool_name, {"user_id": user_id})
         if result.startswith("[PENDING:"):
-            response = f"I need your approval for that. {result}\n\nSay `confirm get_balance` to proceed."
+            response = f"I need your approval for that. {result}\n\nSay `confirm {tool_name}` to proceed."
         else:
             try:
-                summary = await generate_non_stream(prompt=f"The user asked about their balance. Here's the raw data: {result}. Summarize it briefly and naturally.")
-                response = summary or result
-            except Exception:
-                response = result
-
-        return StreamingResponse(
-            iter([
-                f'data: {json.dumps({"token": response, "done": False})}\n\n',
-                f'data: {json.dumps({"done": True, "full": response})}\n\n'
-            ]),
-            media_type="text/event-stream"
-        )
-
-    if any(word in user_msg_lower for word in ["scan network", "network scan", "who is on my wifi", "devices on network"]):
-        result = await tools.execute("network_scan", {"user_id": user_id})
-        if result.startswith("[PENDING:"):
-            response = f"I need your approval for that. {result}\n\nSay `confirm network_scan` to proceed."
-        else:
-            try:
-                summary = await generate_non_stream(prompt=f"The user asked to scan the network. Here's the raw result: {result}. Summarize it briefly.")
+                summary = await generate_non_stream(prompt=f"The user asked about {tool_name}. Raw data: {result}. Summarize it briefly and naturally.")
                 response = summary or result
             except Exception:
                 response = result
         return StreamingResponse(
-            iter([
-                f'data: {json.dumps({"token": response, "done": False})}\n\n',
-                f'data: {json.dumps({"done": True, "full": response})}\n\n'
-            ]),
+            iter([f'data: {json.dumps({"token": response, "done": False})}\n\n',
+                  f'data: {json.dumps({"done": True, "full": response})}\n\n']),
             media_type="text/event-stream"
         )
 
-    if any(word in user_msg_lower for word in ["take a note", "save note", "write down", "remember this", "note that"]):
-        content = user_msg
-        for trigger in ["take a note", "save note", "write down", "remember this", "note that"]:
-            if trigger in user_msg_lower:
-                parts = user_msg_lower.split(trigger, 1)
-                if len(parts) > 1:
-                    content = user_msg[len(trigger):].strip()
-                break
-        result = await tools.execute("notes", {"action": "append", "content": content, "tag": "note", "user_id": user_id})
-        response = f"Got it. {result}"
-        return StreamingResponse(
-            iter([
-                f'data: {json.dumps({"token": response, "done": False})}\n\n',
-                f'data: {json.dumps({"done": True, "full": response})}\n\n'
-            ]),
-            media_type="text/event-stream"
-        )
-
-    if any(word in user_msg_lower for word in ["check for updates", "update yourself", "any updates", "new version"]):
-        result = await tools.execute("self_update", {"action": "check", "user_id": user_id})
-        response = result
-        return StreamingResponse(
-            iter([
-                f'data: {json.dumps({"token": response, "done": False})}\n\n',
-                f'data: {json.dumps({"done": True, "full": response})}\n\n'
-            ]),
-            media_type="text/event-stream"
-        )
-
-    if any(word in user_msg_lower for word in ["transfer", "send money", "wire", "pay", "send $"]):
-        result = await tools.execute("transfer_funds", {"user_id": user_id})
-        response = result
-        return StreamingResponse(
-            iter([
-                f'data: {json.dumps({"token": response, "done": False})}\n\n',
-                f'data: {json.dumps({"done": True, "full": response})}\n\n'
-            ]),
-            media_type="text/event-stream"
-        )
-
-    # --- Research shortcut ---
-    if any(word in user_msg_lower for word in ["research", "look up", "search online", "find out about"]):
-        query = user_msg
-        for trigger in ["research", "look up", "search online", "find out about"]:
-            if trigger in user_msg_lower:
-                parts = user_msg_lower.split(trigger, 1)
-                if len(parts) > 1:
-                    query = user_msg[len(trigger):].strip(" ,:.?!")
-                break
-        if query:
-            try:
-                result = await research.research(query)
-                response = result.get("answer", "I couldn't find an answer.")
-                sources = result.get("sources", [])
-                if sources:
-                    response += "\n\nSources:\n" + "\n".join([f"- {s.get('title', 'Unknown')} ({s.get('url', '')})" for s in sources[:3]])
-            except Exception as e:
-                response = f"Research failed: {e}"
-            memory.save_interaction(session, user_msg, response, [], user_id=user_id)
+    # === HANDLE RESEARCH ===
+    if intent.type == "research":
+        query = intent.entities.get("query", user_msg)
+        try:
+            result = await research.research(query)
+            response = result.get("answer", "I couldn't find an answer.")
+            sources = result.get("sources", [])
+            if sources:
+                response += "\n\nSources:\n" + "\n".join([f"- {s.get('title', 'Unknown')} ({s.get('url', '')})" for s in sources[:3]])
+        except Exception as e:
+            response = f"Research failed: {e}"
+        memory.save_interaction(session, user_msg, response, [], user_id=user_id)
+        if trail_id:
             trails.append_to_trail(trail_id, response, role="assistant", user_id=user_id, source_type="chat")
-            return StreamingResponse(
-                iter([
-                    f'data: {json.dumps({"token": response, "done": False})}\n\n',
-                    f'data: {json.dumps({"done": True, "full": response})}\n\n'
-                ]),
-                media_type="text/event-stream"
-            )
+        return StreamingResponse(
+            iter([f'data: {json.dumps({"token": response, "done": False})}\n\n',
+                  f'data: {json.dumps({"done": True, "full": response})}\n\n']),
+            media_type="text/event-stream"
+        )
 
-    # --- Coding shortcut ---
-    if any(word in user_msg_lower for word in ["write code", "code", "script", "python function", "program that"]):
-        request_text = user_msg
-        for trigger in ["write code for", "write code", "code for", "code a", "code me", "script that", "python function that", "program that"]:
-            if trigger in user_msg_lower:
-                parts = user_msg_lower.split(trigger, 1)
-                if len(parts) > 1:
-                    request_text = user_msg[len(trigger):].strip(" ,:.?!")
-                break
-        if request_text:
-            try:
-                from core.coder import CoderAgent
-                agent = CoderAgent(user_id)
-                filename = "generated.py"
-                result = await agent.generate(request_text, filename, "python")
+    # === HANDLE CODING ===
+    if intent.type == "coding":
+        from core.coder import CoderAgent
+        agent = CoderAgent(user_id)
+        subtype = intent.subtype
+        request_text = intent.entities.get("request", user_msg)
+
+        try:
+            if subtype == "generate":
+                for trigger in ["write code for", "write code", "code for", "code a", "generate"]:
+                    if trigger in user_msg.lower():
+                        parts = user_msg.lower().split(trigger, 1)
+                        if len(parts) > 1:
+                            request_text = user_msg[len(parts[0]) + len(trigger):].strip(" ,:.?!")
+                        break
+                result = await agent.generate(request_text, "generated.py", "python")
                 response = f"I wrote `{result['filename']}` in your workspace:\n\n```{result['language']}\n{result['code']}\n```"
-            except Exception as e:
-                response = f"Coding assistant failed: {e}"
-            memory.save_interaction(session, user_msg, response, [], user_id=user_id)
-            trails.append_to_trail(trail_id, response, role="assistant", user_id=user_id, source_type="chat")
-            return StreamingResponse(
-                iter([
-                    f'data: {json.dumps({"token": response, "done": False})}\n\n',
-                    f'data: {json.dumps({"done": True, "full": response})}\n\n'
-                ]),
-                media_type="text/event-stream"
-            )
 
-    if memory.is_explicit_memory_command(user_msg):
+            elif subtype == "fix":
+                result = await agent.edit(request_text, "generated.py")
+                response = f"I fixed the code in `{result['filename']}`:\n\n```{result['language']}\n{result['code']}\n```"
+
+            elif subtype == "analyze":
+                result = agent.analyze("generated.py")
+                response = f"Here's my analysis:\n\n{result.get('analysis', 'No analysis available.')}"
+
+            elif subtype == "run":
+                result = agent.run("generated.py", "python", 10)
+                response = f"Output:\n```\n{result.get('output', 'No output')}\n```"
+
+            else:
+                response = "I'm not sure what to do with that code. Try: 'fix this', 'explain this', or 'run this'."
+
+        except Exception as e:
+            response = f"Coding assistant failed: {e}"
+
+        memory.save_interaction(session, user_msg, response, [], user_id=user_id)
+        if trail_id:
+            trails.append_to_trail(trail_id, response, role="assistant", user_id=user_id, source_type="chat")
+        return StreamingResponse(
+            iter([f'data: {json.dumps({"token": response, "done": False})}\n\n',
+                  f'data: {json.dumps({"done": True, "full": response})}\n\n']),
+            media_type="text/event-stream"
+        )
+
+    # === HANDLE FILE OPS ===
+    if intent.type == "file_ops":
+        response = "You can manage files through the Files panel (📁) in the sidebar, or tell me 'upload [filename]'."
+        return StreamingResponse(
+            iter([f'data: {json.dumps({"token": response, "done": False})}\n\n',
+                  f'data: {json.dumps({"done": True, "full": response})}\n\n']),
+            media_type="text/event-stream"
+        )
+
+    # === HANDLE EXPLICIT MEMORY ===
+    if intent.type == "explicit_memory":
         fact_text = user_msg
         for trigger in ["remember that", "remember i", "remember my", "save this", "store this", "note that", "don't forget", "add to my"]:
-            if trigger in user_msg_lower:
-                parts = user_msg_lower.split(trigger, 1)
+            if trigger in user_msg.lower():
+                parts = user_msg.lower().split(trigger, 1)
                 if len(parts) > 1:
                     fact_text = user_msg[len(trigger):].strip()
                 break
@@ -935,10 +895,8 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
         else:
             response = "I couldn't understand what to remember. Try: Remember that [fact]"
         return StreamingResponse(
-            iter([
-                f'data: {json.dumps({"token": response, "done": False})}\n\n',
-                f'data: {json.dumps({"done": True, "full": response})}\n\n'
-            ]),
+            iter([f'data: {json.dumps({"token": response, "done": False})}\n\n',
+                  f'data: {json.dumps({"done": True, "full": response})}\n\n']),
             media_type="text/event-stream"
         )
 
