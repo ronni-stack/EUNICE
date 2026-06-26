@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+#EUNICE - Efficient Unified Neural Intelligence for Communication and Execution
+# Copyright 2026 Ronny Koome
+# Licensed under the Elastic License 2.0.
+# See LICENSE for details.
+
 """
 EUNICE Morning Briefing — v0.7 (Trail-Enhanced)
 Uses background daemon and trail intelligence for proactive summaries.

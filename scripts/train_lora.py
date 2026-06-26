@@ -1,3 +1,7 @@
+#EUNICE - Efficient Unified Neural Intelligence for Communication and Execution
+# Copyright 2026 Ronny Koome
+# Licensed under the Elastic License 2.0.
+# See LICENSE for details.
 """EUNICE v0.6 — LoRA Fine-Tuning Pipeline"""
 from unsloth import FastLanguageModel
 from datasets import load_dataset

@@ -1,3 +1,8 @@
+# # EUNICE - Efficient Unified Neural Intelligence for Communication and Execution
+# Copyright 2026 Ronny Koome
+# Licensed under the Elastic License 2.0.
+# See LICENSE for details.
+
 """EUNICE Trails — Associative Memory Manager (multi-user)
 Manages trails, nodes, activation, and cross-trail linking.
 """

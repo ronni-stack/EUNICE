@@ -1,3 +1,7 @@
+# EUNICE - Efficient Unified Neural Intelligence for Communication and Execution
+# Copyright 2026 Ronny Koome
+# Licensed under the Elastic License 2.0. See LICENSE for details.
+
 """EUNICE v0.9 — Authentication + Identity Resolution
 
 Supports two auth modes:

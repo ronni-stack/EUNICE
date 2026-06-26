@@ -1,3 +1,8 @@
+# # EUNICE - Efficient Unified Neural Intelligence for Communication and Execution
+# Copyright 2026 Ronny Koome
+# Licensed under the Elastic License 2.0.
+# See LICENSE for details.
+
 """EUNICE Trails — SQLite storage for associative memory trails (multi-user)."""
 import sqlite3
 from datetime import datetime

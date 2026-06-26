@@ -1,5 +1,11 @@
 #!/bin/bash
-# EUNICE Cron Setup — Morning Brief
+# EUNICE - Efficient Unified Neural Intelligence for Communication and Execution
+# Copyright 2026 Ronny Koome
+# Licensed under the Elastic License 2.0.
+# See LICENSE for details.
+
+
+# # EUNICE Cron Setup — Morning Brief
 # Run this once to install the morning briefing schedule
 
 echo "Setting up EUNICE morning brief cron job..."

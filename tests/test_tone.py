@@ -1,3 +1,8 @@
+# # EUNICE - Efficient Unified Neural Intelligence for Communication and Execution
+# Copyright 2026 Ronny Koome
+# Licensed under the Elastic License 2.0.
+# See LICENSE for details.
+
 """EUNICE v0.9 — Dynamic Tone Adaptation Tests"""
 import pytest
 import memory.sqlite_store
