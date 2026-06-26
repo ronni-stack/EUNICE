@@ -1,6 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <meta name="theme-color" content="#0d0d0d">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/icon-192.png">
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>EUNICE</title>
@@ -32,9 +35,23 @@
       --header-height: 56px;
       --input-height: 80px;
       --shadow: 0 4px 24px rgba(0,0,0,0.4);
-      .bubble pre { white-space: pre; word-wrap: normal; overflow-x: auto; }
-      .bubble pre code { white-space: pre; word-wrap: normal; }
+      @media (max-width: 900px) {
+      /* Prevent iOS zoom */
+      #msg-input { font-size: 16px; }
+  
+      /* Bigger touch targets */
+      .tool-btn, #send-btn { width: 44px; height: 44px; }
+      .message-actions { opacity: 1; } /* Always visible on mobile */
+      .message-actions button { padding: 8px; }
+  
+      /* Safe area for iPhone home indicator */
+      #input-wrapper { padding-bottom: max(24px, env(safe-area-inset-bottom)); }
+}
     }
+
+    /* FIX #1: Moved out of :root where they were invalid */
+    .bubble pre { white-space: pre; word-wrap: normal; overflow-x: auto; }
+    .bubble pre code { white-space: pre; word-wrap: normal; }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); overflow: hidden; }
@@ -221,9 +238,6 @@
       border-radius: var(--radius-md);
       margin: 12px 0;
       overflow: hidden;
-      white-space: pre;
-      word-wrap: normal;
-      overflow-x: auto;
     }
     .bubble pre code {
       background: transparent;
@@ -232,8 +246,6 @@
       overflow-x: auto;
       font-size: 13px;
       line-height: 1.5;
-      white-space: pre;
-      word-wrap: normal;
     }
     .code-block-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: rgba(255,255,255,0.03); border-bottom: 1px solid var(--border); font-size: 12px; color: var(--text-muted); }
     .code-block-header button { padding: 5px; border-radius: 6px; color: var(--text-muted); display: flex; align-items: center; justify-content: center; }
@@ -374,6 +386,7 @@
       #chat-title { max-width: 150px; }
     }
   </style>
+<base target="_blank">
 <base target="_blank">
 </head>
 <body>
@@ -729,7 +742,7 @@
 
   let currentSession = null;
   let isStreaming = false;
-  let currentController = null;
+  let currentController = null;  // FIX #5: Will be used properly now
   let voices = [];
   let voiceEnabled = false;
   let selectedVoice = '';
@@ -765,7 +778,7 @@
     return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
-  // Improved markdown parser with formatting fixes
+  // FIX #2: Improved markdown parser with correct list grouping and formatting fixes
   function renderMarkdown(text) {
     // Pre-process: fix common model formatting errors
     text = text.replace(/([a-zA-Z0-9_])\bExample usage:/g, '$1\n\nExample usage:');
@@ -800,9 +813,9 @@
     text = text.replace(/^## (.*$)/gim, '<h2>$1</h2>');
     text = text.replace(/^# (.*$)/gim, '<h1>$1</h1>');
 
-    // Lists
+    // Lists - Properly group consecutive list items
     text = text.replace(/^\s*[-*+] (.*$)/gim, '<li>$1</li>');
-    text = text.replace(/(<li>.*<\/li>\n?)+/g, match => `<ul>${match}</ul>`);
+    text = text.replace(/(<li>.*<\/li>(?:\s*|$))+/g, match => `<ul>${match}</ul>`);
 
     // Blockquotes
     text = text.replace(/^> (.*$)/gim, '<blockquote>$1</blockquote>');
@@ -1004,7 +1017,7 @@
   }
 
   // ─── Streaming Chat ───
-    // ─── Streaming Chat ───
+  // ─── Streaming Chat ───
   async function sendMessage() {
     const text = input.value.trim();
     if (!text || isStreaming) return;
@@ -1495,12 +1508,21 @@ ${data.content.slice(0, 2000)}${data.content.length > 2000 ? '[truncated]' : ''}
   // ─── Health / Init ───
   async function checkHealth() {
     try {
-      const resp = await fetch(`${API_BASE}/health`, { headers: getHeaders('') });
-      const data = await resp.json();
-      modelBadge.textContent = data.model || 'EUNICE';
-      return data;
-    } catch (e) { modelBadge.textContent = 'Offline'; return null; }
-  }
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000); // 5s max
+        const resp = await fetch(`${API_BASE}/health`, { 
+            headers: getHeaders(''), 
+            signal: controller.signal 
+        });
+        clearTimeout(timeout);
+        const data = await resp.json();
+        modelBadge.textContent = data.model || 'EUNICE';
+        return data;
+    } catch (e) { 
+        modelBadge.textContent = 'Offline'; 
+        return null; 
+    }
+}
 
   async function loadPersonality() {
     try {
@@ -1511,7 +1533,7 @@ ${data.content.slice(0, 2000)}${data.content.length > 2000 ? '[truncated]' : ''}
   }
 
   async function initApp() {
-    await checkHealth();
+    // checkHealth already called in bootApp
     await loadSessions();
     await loadPersonality();
     if (sessionToken) {
@@ -1541,11 +1563,25 @@ ${data.content.slice(0, 2000)}${data.content.length > 2000 ? '[truncated]' : ''}
   // Periodic health check
   setInterval(checkHealth, 10000);
 
-  // Boot
-  if (!sessionToken && !apiKey) {
-    openModal('login-overlay');
-  }
-  initApp();
+  // Boot - FIX: Always hide loader, but only init authenticated features when logged in
+  async function bootApp() {
+    try {
+        await checkHealth();
+    } catch (e) {
+        console.error('Health check failed:', e);
+    }
+    
+    // ALWAYS hide loader — don't let it hang
+    document.getElementById('loading-overlay').style.display = 'none';
+    
+    if (!sessionToken && !apiKey) {
+        openModal('login-overlay');
+        return;
+    }
+    await initApp();
+}
+
+  bootApp();
   </script>
 </body>
 </html>

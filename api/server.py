@@ -1,3 +1,7 @@
+# EUNICE - Efficient Unified Neural Intelligence for Communication and Execution
+# Copyright 2026 Ronny Koome
+# Licensed under the Elastic License 2.0. See LICENSE for details.
+
 """EUNICE v0.9 — Multi-User Identity + Autonomous Discovery
 Associative memory, proactive retrieval, background daemon integration, onboarding,
 identity/device model, and session-token auth.
@@ -738,6 +742,8 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
     user_msg = body.get("message", "").strip()
     session = body.get("session", "default").strip()
     user_id = await _resolve_user_id(request, body)
+    trail_id = None  # ← ADD THIS
+    user_msg_lower = user_msg.lower()  # ← ADD THIS
 
     logger.info(f"[CHAT] user={user_id} session={session} msg={user_msg!r}")
 
@@ -766,8 +772,7 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
 
     user_name = _get_user_name(user_id)
 
-    confirm_match = re.match(r'^confirm\s+(\w+)', user_msg.lower())
-        # === INTENT CLASSIFICATION ===
+    # === INTENT CLASSIFICATION ===
     classifier = IntentClassifier()
     intent = classifier.classify(user_msg)
     logger.info(f"[CHAT] user={user_id} intent={intent.type} subtype={intent.subtype} conf={intent.confidence}")
