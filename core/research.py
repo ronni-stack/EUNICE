@@ -157,6 +157,9 @@ async def _summarize(query: str, sources: List[Source]) -> dict:
     prompt = f"""You are EUNICE, a research assistant. Answer the user's question using ONLY the provided sources.
 Be concise, accurate, and cite sources using [Source N] format.
 If the sources don't contain the answer, say so — do not make things up.
+If a source mentions a currency/item but does NOT explicitly rank it in the requested list, do not include it in a numbered ranking.
+Never use contradictory phrasing like "not mentioned in the top X, but mentioned as..."
+If the sources only provide a partial list, present exactly what they provide and note that it is incomplete.
 
 User question: {query}
 

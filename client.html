@@ -199,7 +199,7 @@
     .capability-card .title { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
     .capability-card .desc { font-size: 12px; color: var(--text-muted); line-height: 1.4; }
 
-    #messages { display: none; flex-direction: column; padding: 24px 0 120px; }
+    #messages { display: none; flex-direction: column; padding: 24px 0; }
     #messages.active { display: flex; }
     .message-row { display: flex; padding: 16px 16%; }
     .message-row.user { justify-content: flex-end; }
@@ -294,16 +294,12 @@
 
     /* Input area */
     #input-wrapper {
-      position: fixed;
-      bottom: 0;
-      left: var(--sidebar-width);
-      right: 0;
       padding: 12px 16% 24px;
-      background: linear-gradient(to top, var(--bg) 70%, transparent);
-      z-index: 100;
+      background: var(--bg);
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
       transition: left .25s ease;
     }
-    #sidebar.hidden + #main #input-wrapper { left: 0; }
     #input-box {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -413,7 +409,6 @@
       #input-wrapper { padding: 12px 5% 24px; }
       #menu-toggle { display: flex; }
       #sidebar { position: fixed; z-index: 1200; height: 100vh; }
-      #input-wrapper { left: 0; }
     }
     @media (max-width: 600px) {
       .capability-grid { grid-template-columns: 1fr; }

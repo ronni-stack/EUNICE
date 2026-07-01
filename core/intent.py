@@ -72,6 +72,11 @@ class IntentClassifier:
         "step by step", "break this down"
     ]
 
+    SELF_TRIGGERS = [
+        "your name", "who are you", "what are you", "what is your name",
+        "tell me about yourself", "introduce yourself", "what do you call yourself"
+    ]
+
     TOOL_KEYWORDS = {
         "get_balance": ["balance", "account", "how much money"],
         "network_scan": ["scan network", "network scan", "who is on my wifi", "devices on network"],
@@ -170,7 +175,11 @@ class IntentClassifier:
         if coding_subtype:
             return Intent("coding", 0.9, subtype=coding_subtype, entities={"request": user_msg})
 
-        # 5. Research
+        # 5. Self / identity questions (should be answered from system prompt, not research)
+        if any(t in lower for t in self.SELF_TRIGGERS):
+            return Intent("general_chat", 0.92)
+
+        # 6. Research
         if any(t in lower for t in self.RESEARCH_TRIGGERS):
             query = self._extract_research_query(user_msg)
             return Intent("research", 0.85, entities={"query": query})
