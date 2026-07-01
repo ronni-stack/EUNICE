@@ -19,11 +19,68 @@ FILES_DIR.mkdir(parents=True, exist_ok=True)
 
 # Inference
 OLLAMA_URL = os.getenv("EUNICE_OLLAMA_URL", "http://localhost:11434")
+LOCALAI_URL = os.getenv("EUNICE_LOCALAI_URL", "http://localhost:8080")
+LOCALAI_API_KEY = os.getenv("EUNICE_LOCALAI_API_KEY", "dummy")
 #MODEL_NAME = os.getenv("EUNICE_MODEL", "llama3.2:3b")
 #MODEL_NAME = os.getenv("EUNICE_MODEL", "phi4")
 MODEL_NAME = os.getenv("EUNICE_MODEL", "llama3.2:3b")
 OLLAMA_TIMEOUT = float(os.getenv("EUNICE_OLLAMA_TIMEOUT", "300.0"))
 MEMORY_LIMIT = int(os.getenv("EUNICE_MEMORY_LIMIT", "20"))
+
+# Backend selection: "ollama" or "localai"
+INFERENCE_BACKEND = os.getenv("EUNICE_INFERENCE_BACKEND", "ollama")
+
+# Approved models with metadata. Add models here as they become available.
+APPROVED_MODELS = {
+    "llama3.2:3b": {
+        "family": "llama",
+        "params": "3b",
+        "vram_gb": 4,
+        "tiers": ["routing", "light_chat"],
+        "context_length": 4096,
+    },
+    "llama3.1:8b": {
+        "family": "llama",
+        "params": "8b",
+        "vram_gb": 8,
+        "tiers": ["chat", "tool_use", "coding"],
+        "context_length": 8192,
+    },
+    "llama3.1:70b": {
+        "family": "llama",
+        "params": "70b",
+        "vram_gb": 48,
+        "tiers": ["legal", "finance", "deep_reasoning"],
+        "context_length": 8192,
+    },
+    "qwen2.5:14b": {
+        "family": "qwen",
+        "params": "14b",
+        "vram_gb": 10,
+        "tiers": ["chat", "tool_use", "coding", "deep_reasoning"],
+        "context_length": 8192,
+    },
+}
+
+# Map task tiers to ideal models. The router will fall back to whatever is available.
+MODEL_TIER_MAP = {
+    "routing": "llama3.2:3b",
+    "light_chat": "llama3.2:3b",
+    "chat": "llama3.1:8b",
+    "tool_use": "llama3.1:8b",
+    "coding": "qwen2.5:14b",
+    "legal": "llama3.1:70b",
+    "finance": "llama3.1:70b",
+    "deep_reasoning": "llama3.1:70b",
+}
+
+# Model governance policy
+MODEL_POLICY = {
+    "default_model": MODEL_NAME,
+    "approved_models_only": True,
+    "fallback_on_missing": True,
+    "max_context": 4096,
+}
 
 # Auth
 API_KEY = os.getenv("EUNICE_API_KEY", "eunice-local-dev-key-2026")

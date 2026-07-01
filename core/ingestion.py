@@ -191,11 +191,13 @@ class IngestionPipeline:
         content_type = Path(filename).suffix.lower().lstrip(".") or "unknown"
         for idx, chunk in enumerate(chunks):
             chunk_id = f"doc_{user_id}_{doc_hash}_{idx}"
+            org_id = self.memory._get_org_id(user_id)
             self.memory.vector.store_document(
                 doc_id=chunk_id,
                 text=chunk,
                 metadata={
                     "user_id": user_id,
+                    "org_id": org_id,
                     "doc_hash": doc_hash,
                     "filename": filename,
                     "chunk_index": idx,
@@ -217,7 +219,8 @@ class IngestionPipeline:
 
     def retrieve_relevant_chunks(self, query: str, user_id: str, n_results: int = 3) -> List[dict]:
         """Retrieve top-k document chunks relevant to the query."""
-        results = self.memory.vector.search_documents(query, n_results=n_results, user_id=user_id)
+        org_id = self.memory._get_org_id(user_id)
+        results = self.memory.vector.search_documents(query, n_results=n_results, user_id=user_id, org_id=org_id)
         return [
             {
                 "content": r["content"],

@@ -12,6 +12,8 @@ import subprocess
 from typing import Any
 from datetime import datetime
 from config import TOOLS_DIR, DATA_DIR, get_notes_path, RISK_LOW, RISK_MEDIUM, RISK_HIGH, RISK_CRITICAL
+from core.rbac import has_permission, get_user_permissions
+from memory.sqlite_store import SQLiteStore
 
 class ToolRouter:
     """Routes tool calls with safety enforcement and audit logging."""
@@ -26,7 +28,7 @@ class ToolRouter:
         "file_manager": "Read, write, list, or delete files in the user's sandboxed workspace. Params: {'action': 'read|write|list|delete', 'path': '...', 'content': '...'}",
     }
 
-    def __init__(self):
+    def __init__(self, sqlite_store=None):
         self.risk_map = {}
         for t in RISK_LOW: self.risk_map[t] = "low"
         for t in RISK_MEDIUM: self.risk_map[t] = "medium"
@@ -36,6 +38,9 @@ class ToolRouter:
         # Audit log for all tool executions
         self.audit_log_path = DATA_DIR / "tool_audit.log"
         os.makedirs(DATA_DIR, exist_ok=True)
+
+        # RBAC lookup; shared SQLiteStore avoids per-call re-instantiation
+        self.sqlite_store = sqlite_store or SQLiteStore()
 
     def get_available_tools(self) -> list:
         """Scan tools/ directory and return tool metadata with risk tiers and descriptions."""
@@ -63,8 +68,17 @@ class ToolRouter:
         except Exception:
             pass
 
-    async def execute(self, tool_name: str, params: dict) -> str:
-        """Execute a tool with risk-tier checks and confirmation requirements."""
+    async def execute(self, tool_name: str, params: dict, permissions: list = None) -> str:
+        """Execute a tool with RBAC, risk-tier checks, and confirmation requirements."""
+        user_id = params.get("user_id")
+        if user_id:
+            perms = permissions if permissions is not None else get_user_permissions(self.sqlite_store, user_id)
+            if not has_permission(perms, f"tool:{tool_name}") and not has_permission(perms, "tool:execute"):
+                risk = self.risk_map.get(tool_name, "unknown")
+                msg = f"[DENIED: you do not have permission to use '{tool_name}']"
+                self._log_audit(tool_name, risk, params, msg, approved=False)
+                return msg
+
         risk = self.risk_map.get(tool_name, "unknown")
 
         # CRITICAL: Always deny

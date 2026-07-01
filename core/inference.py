@@ -3,131 +3,123 @@
 # Licensed under the Elastic License 2.0.
 # See LICENSE for details.
 
-"""EUNICE v0.8 — Ollama Inference & Streaming (Hardened)
-Added explicit error logging to catch silent failures.
+"""EUNICE Enterprise — Inference facade.
+
+This module exposes the familiar `stream_chat` and `generate_non_stream`
+functions used throughout EUNICE. Under the hood it routes through a
+configurable backend (Ollama or LocalAI) and an optional model router.
 """
 import json
 import logging
-import httpx
-from typing import AsyncGenerator
-from config import OLLAMA_URL, MODEL_NAME, OLLAMA_TIMEOUT
+from typing import AsyncGenerator, Optional
+
+from config import (
+    INFERENCE_BACKEND,
+    OLLAMA_URL,
+    LOCALAI_URL,
+    LOCALAI_API_KEY,
+    OLLAMA_TIMEOUT,
+    MODEL_NAME,
+    MODEL_POLICY,
+    MODEL_TIER_MAP,
+    APPROVED_MODELS,
+)
+from core.backends import OllamaBackend, LocalAIBackend
+from core.model_router import ModelRouter
 
 logger = logging.getLogger("eunice.inference")
 
-OLLAMA_GENERATE_URL = f"{OLLAMA_URL}/api/generate"
-OLLAMA_CHAT_URL = f"{OLLAMA_URL}/api/chat"
 
-async def stream_chat(messages: list, tools: list = None) -> AsyncGenerator[str, None]:
-    """Stream chat completion from Ollama. Yields JSON strings."""
-    payload = {
-        "model": MODEL_NAME,
-        "messages": messages,
-        "stream": True,
-        "options": {"temperature": 0.7, "num_predict": 512}
-    }
+def _create_backend():
+    """Create the configured inference backend."""
+    if INFERENCE_BACKEND.lower() == "localai":
+        return LocalAIBackend(base_url=LOCALAI_URL, timeout=OLLAMA_TIMEOUT, api_key=LOCALAI_API_KEY)
+    return OllamaBackend(base_url=OLLAMA_URL, timeout=OLLAMA_TIMEOUT)
 
-    logger.info(f"[OLLAMA] stream_chat request model={MODEL_NAME} messages={len(messages)}")
-    logger.debug(f"[OLLAMA] stream_chat payload={json.dumps(payload, default=str)[:500]}")
 
-    full_response = ""
-    is_tool = False
+def _create_router(backend=None):
+    """Create the default model router for the configured backend."""
+    backend = backend or _create_backend()
+    return ModelRouter(
+        backend=backend,
+        default_model=MODEL_POLICY.get("default_model", MODEL_NAME),
+        tier_map=MODEL_TIER_MAP,
+        approved_models=APPROVED_MODELS if MODEL_POLICY.get("approved_models_only") else None,
+        fallback_on_missing=MODEL_POLICY.get("fallback_on_missing", True),
+    )
 
-    try:
-        async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:
-            async with client.stream("POST", OLLAMA_CHAT_URL, json=payload) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.strip():
-                        continue
-                    try:
-                        data = json.loads(line)
-                        if data.get("done"):
-                            break
-                        token = data.get("message", {}).get("content", "")
-                        if token:
-                            full_response += token
-                            # Detect tool call pattern
-                            if full_response.strip().startswith("{") and '"tool"' in full_response:
-                                is_tool = True
-                            elif not is_tool:
-                                yield json.dumps({"token": token, "done": False})
-                    except json.JSONDecodeError as e:
-                        logger.warning(f"[OLLAMA] JSON decode error on line: {line[:80]}... | Error: {e}")
-                        continue
-                    except Exception as e:
-                        logger.warning(f"[OLLAMA] Unexpected parse error: {type(e).__name__}: {e}")
-                        continue
-    except httpx.ConnectError as e:
-        logger.error(f"[OLLAMA] ConnectError: {e}")
-        yield json.dumps({"error": "Ollama is not running. Start it with: ollama serve"})
-        return
-    except httpx.ReadTimeout as e:
-        logger.error(f"[OLLAMA] ReadTimeout (model took too long to respond): {e}")
-        yield json.dumps({"error": f"Ollama timed out after {OLLAMA_TIMEOUT}s. Try a smaller model (e.g. llama3.2:3b) or increase EUNICE_OLLAMA_TIMEOUT."})
-        return
-    except httpx.ReadError as e:
-        logger.error(f"[OLLAMA] ReadError (connection dropped): {e}")
-        yield json.dumps({"error": "Connection to Ollama dropped. Retry your message."})
-        return
-    except Exception as e:
-        error_msg = str(e) or f"Unknown inference error: {type(e).__name__}"
-        logger.exception(f"[OLLAMA] {error_msg}")
-        yield json.dumps({"error": error_msg})
-        return
 
-    logger.info(f"[OLLAMA] stream_chat complete response_len={len(full_response)} is_tool={is_tool}")
+# Default backend and router instances. These are lazy-created at import time.
+_default_backend = None
+_default_router = None
 
-    # Handle tool call detection at end of stream
-    if is_tool and full_response.strip():
+
+def get_backend():
+    """Return the default inference backend, creating it if necessary."""
+    global _default_backend
+    if _default_backend is None:
+        _default_backend = _create_backend()
+    return _default_backend
+
+
+def get_router():
+    """Return the default model router, creating it if necessary."""
+    global _default_router
+    if _default_router is None:
+        _default_router = _create_router(get_backend())
+    return _default_router
+
+
+async def stream_chat(
+    messages: list,
+    tools: list = None,
+    model: Optional[str] = None,
+    task_tier: str = "chat",
+) -> AsyncGenerator[str, None]:
+    """Stream chat completion. Optionally selects model by task tier."""
+    backend = get_backend()
+    selected_model = model
+
+    if selected_model is None and task_tier:
         try:
-            parsed = json.loads(full_response.strip())
-            if isinstance(parsed, dict) and "tool" in parsed:
-                logger.info(f"[OLLAMA] detected tool_call: {parsed['tool']}")
-                yield json.dumps({"tool_call": True, "tool": parsed["tool"], "params": parsed.get("params", {})})
-                return
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.warning(f"[OLLAMA] Tool JSON parse failed: {e}")
-            pass
+            selection = await get_router().select(task_tier)
+            selected_model = selection.model
+            if selection.fallback:
+                logger.warning(f"[INFERENCE] {selection.note}")
+        except Exception as e:
+            logger.warning(f"[INFERENCE] model router failed: {e}; using default model")
+            selected_model = MODEL_NAME
 
-    yield json.dumps({"done": True, "full": full_response})
+    logger.info(f"[INFERENCE] stream_chat backend={backend.name} model={selected_model} tier={task_tier}")
+    async for event in backend.stream_chat(messages=messages, model=selected_model, tools=tools):
+        yield event
 
-async def generate_non_stream(messages: list = None, prompt: str = None, format_json: bool = False) -> str:
-    """Non-streaming generation for background tasks and dynamic denials.
-    Accepts either messages list or raw prompt string.
-    """
-    if messages:
-        payload = {
-            "model": MODEL_NAME,
-            "messages": messages,
-            "stream": False,
-            "options": {"temperature": 0.8, "num_predict": 128}
-        }
-        url = OLLAMA_CHAT_URL
-    else:
-        payload = {
-            "model": MODEL_NAME,
-            "prompt": prompt or "",
-            "stream": False,
-            "options": {"temperature": 0.1, "num_predict": 256}
-        }
-        if format_json:
-            payload["format"] = "json"
-        url = OLLAMA_GENERATE_URL
 
-    logger.info(f"[OLLAMA] generate_non_stream request model={MODEL_NAME} url={url.split('/')[-1]}")
-    logger.debug(f"[OLLAMA] generate_non_stream prompt={prompt[:200]!r}")
+async def generate_non_stream(
+    messages: list = None,
+    prompt: str = None,
+    format_json: bool = False,
+    model: Optional[str] = None,
+    task_tier: str = "chat",
+) -> str:
+    """Non-streaming generation for background tasks and dynamic denials."""
+    backend = get_backend()
+    selected_model = model
 
-    try:
-        async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:  # CHANGED: was hardcoded 30.0
-            resp = await client.post(url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            if messages:
-                result = data.get("message", {}).get("content", "").strip()
-            else:
-                result = data.get("response", "").strip()
-            logger.info(f"[OLLAMA] generate_non_stream response_len={len(result)}")
-            return result
-    except Exception as e:
-        logger.exception(f"[OLLAMA] generate_non_stream failed: {type(e).__name__}: {e}")
-        return ""
+    if selected_model is None and task_tier:
+        try:
+            selection = await get_router().select(task_tier)
+            selected_model = selection.model
+            if selection.fallback:
+                logger.warning(f"[INFERENCE] {selection.note}")
+        except Exception as e:
+            logger.warning(f"[INFERENCE] model router failed: {e}; using default model")
+            selected_model = MODEL_NAME
+
+    logger.info(f"[INFERENCE] generate_non_stream backend={backend.name} model={selected_model} tier={task_tier}")
+    return await backend.generate(
+        prompt=prompt,
+        messages=messages,
+        model=selected_model,
+        format_json=format_json,
+    )

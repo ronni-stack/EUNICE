@@ -18,6 +18,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from config import BASE_DIR, DATA_DIR, VERSION, MODEL_NAME, MEMORY_LIMIT, OLLAMA_URL, OLLAMA_TIMEOUT
 from core.auth import verify_token, get_current_user, get_auth_context, AuthContext
+from core.rbac import has_permission, get_user_permissions
 from core.identity import IdentityManager
 from core.personality import load_personality, save_personality
 from core.inference import stream_chat, generate_non_stream
@@ -131,6 +132,16 @@ def _get_user_name(user_id: str) -> str:
     if user:
         return user.get("preferred_name") or user.get("name") or "the user"
     return "the user"
+
+
+def _require_permission(user_id: str, permission: str):
+    """Raise HTTPException 403 if the user lacks the required permission."""
+    perms = get_user_permissions(memory.sqlite, user_id)
+    if not has_permission(perms, permission):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Access denied: missing permission '{permission}'"
+        )
 
 
 # --- Dynamic Denial Prompt ---
@@ -497,6 +508,7 @@ async def _handle_onboarding(user_id: str, user_msg: str, session: str) -> str:
                     fact_text = user_msg[len(trigger):].strip()
                 break
         if fact_text and fact_text != user_msg:
+            _require_permission(user_id, "memory:write")
             memory.sqlite.save_fact("user_stated", fact_text, "explicit", 1.0, user_id=user_id, source="explicit")
             memory.vector.store_document(
                 doc_id=f"fact_explicit_{user_id}_{hash(fact_text) & 0xFFFF}",
@@ -542,8 +554,9 @@ async def chat(request: Request, background_tasks: BackgroundTasks, token: str =
     if not user_msg:
         return {"reply": "[No message received]"}
 
-    # Ensure user exists
+    # Ensure user exists and has baseline permissions
     memory.ensure_user(user_id)
+    _require_permission(user_id, "chat")
     user_name = _get_user_name(user_id)
 
     # Onboarding: short-circuit if not complete
@@ -652,6 +665,7 @@ async def chat(request: Request, background_tasks: BackgroundTasks, token: str =
                     fact_text = user_msg[len(trigger):].strip()
                 break
         if fact_text:
+            _require_permission(user_id, "memory:write")
             memory.sqlite.save_fact("user_stated", fact_text, "explicit", 1.0, user_id=user_id, source="explicit")
             memory.vector.store_document(
                 doc_id=f"fact_explicit_{user_id}_{hash(fact_text) & 0xFFFF}",
@@ -686,7 +700,7 @@ async def chat(request: Request, background_tasks: BackgroundTasks, token: str =
     # 6. NORMAL CHAT with trail context
     memory.save_interaction(session, user_msg, "", [], user_id=user_id)
     history = memory.get_recent_history(session, MEMORY_LIMIT, user_id=user_id)
-    all_facts = memory.sqlite.get_facts(user_id=user_id)
+    all_facts = memory.get_facts(user_id=user_id)
     available_tools = tools.get_available_tools()
 
     intent = "general_chat"
@@ -761,8 +775,9 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
             media_type="text/event-stream"
         )
 
-    # Ensure user exists
+    # Ensure user exists and has baseline permissions
     memory.ensure_user(user_id)
+    _require_permission(user_id, "chat")
 
     # Onboarding: short-circuit if not complete
     if not memory.is_onboarded(user_id):
@@ -927,6 +942,7 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
                     fact_text = user_msg[len(trigger):].strip()
                 break
         if fact_text:
+            _require_permission(user_id, "memory:write")
             memory.sqlite.save_fact("user_stated", fact_text, "explicit", 1.0, user_id=user_id, source="explicit")
             memory.vector.store_document(
                 doc_id=f"fact_explicit_{user_id}_{hash(fact_text) & 0xFFFF}",
@@ -944,6 +960,7 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
 
     # === HANDLE AGENTIC / MULTI-STEP REASONING ===
     if intent.type == "agentic":
+        _require_permission(user_id, "reasoning:run")
         agentic_trail_id = trails.detect_or_create_trail(user_msg, session, user_id=user_id)
         trails.activate_trail(agentic_trail_id, trigger_type="agentic", user_id=user_id)
         logger.info(f"[CHAT] user={user_id} agentic trail={agentic_trail_id}")
@@ -1007,7 +1024,7 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
 
     memory.save_interaction(session, user_msg, "", [], user_id=user_id)
     history = memory.get_recent_history(session, MEMORY_LIMIT, user_id=user_id)
-    all_facts = memory.sqlite.get_facts(user_id=user_id)
+    all_facts = memory.get_facts(user_id=user_id)
     available_tools = tools.get_available_tools()
 
     personality = load_personality(user_name=user_name)
@@ -1372,11 +1389,12 @@ async def rename_session(session: str, request: Request, token: str = Depends(ve
 @app.get("/facts")
 async def list_facts(request: Request, category: str = None, token: str = Depends(verify_token)):
     user_id = await _resolve_user_id(request)
-    return {"facts": memory.sqlite.get_facts(category, user_id=user_id)}
+    return {"facts": memory.get_facts(category, user_id=user_id)}
 
 @app.delete("/facts/{key}")
 async def delete_fact(key: str, request: Request, token: str = Depends(verify_token)):
     user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "memory:write")
     deleted = memory.sqlite.delete_fact(key, user_id=user_id)
     return {"deleted": deleted}
 

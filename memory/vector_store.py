@@ -51,7 +51,7 @@ class VectorStore:
             self.documents = None
 
     def store_conversation_turn(self, session_id: str, role: str, content: str, turn_id: int,
-                                user_id: str = DEFAULT_USER_ID):
+                                user_id: str = DEFAULT_USER_ID, org_id: str = "default"):
         """Store a conversation turn for semantic retrieval."""
         if not self.conversations:
             print(f"[VECTOR] ⚠ Skip: embeddings not available")
@@ -61,7 +61,7 @@ class VectorStore:
             doc_id = f"{user_id}_{session_id}_{turn_id}"
             self.conversations.add(
                 documents=[content],
-                metadatas=[{"user_id": user_id, "session": session_id, "role": role}],
+                metadatas=[{"user_id": user_id, "org_id": org_id, "session": session_id, "role": role}],
                 ids=[doc_id]
             )
             return True
@@ -108,15 +108,16 @@ class VectorStore:
             print(f"[VECTOR] ⚠ Search failed: {e}")
             return []
 
-    def search_documents(self, query: str, n_results: int = 5, user_id: str = DEFAULT_USER_ID) -> list:
-        """Find relevant documents for this user."""
+    def search_documents(self, query: str, n_results: int = 5, user_id: str = DEFAULT_USER_ID,
+                         org_id: str = "default") -> list:
+        """Find relevant documents for this user within their org."""
         if not self.documents:
             return []
         try:
             results = self.documents.query(
                 query_texts=[query],
                 n_results=n_results,
-                where={"user_id": user_id}
+                where={"$and": [{"user_id": user_id}, {"org_id": org_id}]}
             )
             docs = results["documents"][0] if results["documents"] else []
             metas = results["metadatas"][0] if results["metadatas"] else []

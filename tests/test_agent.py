@@ -22,7 +22,7 @@ class FakeToolRouter:
     def get_available_tools(self):
         return self._tools
 
-    async def execute(self, tool_name, params):
+    async def execute(self, tool_name, params, permissions=None):
         self.calls.append((tool_name, params))
         return self.result
 

@@ -11,6 +11,7 @@ import uuid
 from config import BASE_DIR
 from core.inference import generate_non_stream
 from core.tool_router import ToolRouter
+from core.rbac import has_permission, get_user_permissions
 from core.coder import CoderAgent
 from core.research import ResearchAssistant
 from core.file_manager import FileManager
@@ -115,6 +116,12 @@ Prior Steps:
 
         return None
 
+    def _resolve_permissions(self, user_id: str) -> list:
+        """Resolve user permissions when a real memory/sqlite store is available."""
+        if self.memory and hasattr(self.memory, "sqlite"):
+            return get_user_permissions(self.memory.sqlite, user_id)
+        return []
+
     async def _execute_action(self, action: str, params: dict, user_id: str) -> str:
         """Execute a single action and return observation string."""
         # Special internal tools (must be handled before subprocess tools to avoid
@@ -184,13 +191,18 @@ Prior Steps:
         if action in available:
             params_with_user = dict(params)
             params_with_user.setdefault("user_id", user_id)
-            result = await self.tools.execute(action, params_with_user)
+            result = await self.tools.execute(action, params_with_user, permissions=self._resolve_permissions(user_id))
             return result
 
         return f"[Unknown action: {action}]"
 
     async def run(self, goal: str, session: str, user_id: str, max_steps: int = 5, trail_id: str = ""):
         """Run the ReAct loop and yield events."""
+        permissions = self._resolve_permissions(user_id)
+        if permissions and not has_permission(permissions, "reasoning:run"):
+            yield {"type": "error", "content": "[DENIED: you do not have permission to run the reasoning agent]"}
+            return
+
         steps: List[ReActStep] = []
         run_id = str(uuid.uuid4())
         if self.memory:

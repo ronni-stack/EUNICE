@@ -8,6 +8,7 @@ from typing import Optional
 from memory.sqlite_store import SQLiteStore
 from memory.vector_store import VectorStore
 from core.fact_validator import FactValidator
+from core.rbac import require_permission
 
 DEFAULT_USER_ID = "ronny"
 
@@ -20,9 +21,17 @@ class MemoryManager:
         self.validator = FactValidator()
         self._turn_counter = {}
 
+    def _get_org_id(self, user_id: str) -> str:
+        return self.sqlite.get_user_org(user_id) or "default"
+
+    def _require_permission(self, user_id: str, permission: str):
+        """Raise PermissionError if the user lacks the requested permission."""
+        require_permission(self.sqlite, user_id, permission)
+
     # --- User profile ---
-    def ensure_user(self, user_id: str, name: str = None):
-        return self.sqlite.ensure_user(user_id, name)
+    def ensure_user(self, user_id: str, name: str = None, org_id: str = "default",
+                    department_id: str = "default", role_id: str = "user"):
+        return self.sqlite.ensure_user(user_id, name, org_id, department_id, role_id)
 
     def get_user(self, user_id: str):
         return self.sqlite.get_user(user_id)
@@ -37,14 +46,20 @@ class MemoryManager:
         return self.sqlite.update_user_tone(user_id, **tones)
 
     def has_document(self, doc_hash: str, user_id: str = DEFAULT_USER_ID) -> bool:
-        return self.sqlite.has_document(doc_hash, user_id)
+        self._require_permission(user_id, "documents:read")
+        org_id = self._get_org_id(user_id)
+        return self.sqlite.has_document(doc_hash, user_id, org_id)
 
     def add_document_index(self, doc_hash: str, user_id: str, filename: str,
                            content_type: str, chunk_count: int):
-        return self.sqlite.add_document_index(doc_hash, user_id, filename, content_type, chunk_count)
+        self._require_permission(user_id, "documents:write")
+        org_id = self._get_org_id(user_id)
+        return self.sqlite.add_document_index(doc_hash, user_id, filename, content_type, chunk_count, org_id)
 
     def list_documents(self, user_id: str = DEFAULT_USER_ID) -> list:
-        return self.sqlite.list_documents(user_id)
+        self._require_permission(user_id, "documents:read")
+        org_id = self._get_org_id(user_id)
+        return self.sqlite.list_documents(user_id, org_id)
 
     def get_research_cache(self, query: str) -> Optional[str]:
         return self.sqlite.get_research_cache(query)
@@ -67,27 +82,43 @@ class MemoryManager:
     # --- Episodic (SQLite) ---
     def save_interaction(self, session: str, user_msg: str, assistant_msg: str, tools: list = None,
                          user_id: str = DEFAULT_USER_ID):
-        self.sqlite.save_message("user", user_msg, session, user_id)
-        self.sqlite.save_message("assistant", assistant_msg, session, user_id)
+        self._require_permission(user_id, "memory:write")
+        org_id = self._get_org_id(user_id)
+        self.sqlite.save_message("user", user_msg, session, user_id, org_id)
+        self.sqlite.save_message("assistant", assistant_msg, session, user_id, org_id)
 
     def get_recent_history(self, session: str, n: int = 20, user_id: str = DEFAULT_USER_ID) -> list:
-        return self.sqlite.get_recent(limit=n, session=session, user_id=user_id)
+        self._require_permission(user_id, "memory:read")
+        org_id = self._get_org_id(user_id)
+        return self.sqlite.get_recent(limit=n, session=session, user_id=user_id, org_id=org_id)
 
     def get_session_history(self, session: str, user_id: str = DEFAULT_USER_ID) -> dict:
+        self._require_permission(user_id, "memory:read")
         return self.sqlite.get_session_history(session, user_id)
 
     def get_all_sessions(self, user_id: str = DEFAULT_USER_ID) -> list:
+        self._require_permission(user_id, "memory:read")
         return self.sqlite.get_all_sessions(user_id)
 
     def delete_session(self, session: str, user_id: str = DEFAULT_USER_ID):
+        self._require_permission(user_id, "memory:write")
         return self.sqlite.delete_session(session, user_id)
 
     def rename_session(self, session: str, new_name: str, user_id: str = DEFAULT_USER_ID):
+        self._require_permission(user_id, "memory:write")
         return self.sqlite.rename_session(session, new_name, user_id)
+
+    def get_facts(self, category: str = None, user_id: str = DEFAULT_USER_ID) -> dict:
+        """RBAC-protected wrapper around SQLite get_facts."""
+        self._require_permission(user_id, "memory:read")
+        org_id = self._get_org_id(user_id)
+        return self.sqlite.get_facts(category=category, user_id=user_id, org_id=org_id)
 
     # --- Reasoning (v0.10) ---
     def create_reasoning_run(self, run_id: str, user_id: str, session: str, trail_id: str, goal: str):
-        return self.sqlite.create_reasoning_run(run_id, user_id, session, trail_id, goal)
+        self._require_permission(user_id, "reasoning:run")
+        org_id = self._get_org_id(user_id)
+        return self.sqlite.create_reasoning_run(run_id, user_id, session, trail_id, goal, org_id)
 
     def save_reasoning_step(self, run_id: str, step_index: int, thought: str, action: str,
                             action_input: dict, observation: str):
@@ -106,32 +137,35 @@ class MemoryManager:
         Store a fact with validation.
         source: 'explicit' (user commanded) or 'extracted' (background extraction)
         """
+        self._require_permission(user_id, "memory:write")
+        org_id = self._get_org_id(user_id)
+
         # Generate key from fact
         key = fact.split(":")[0].strip().lower().replace(" ", "_")[:50]
         if not key:
             key = "fact_" + str(hash(fact) & 0xFFFFFFFF)
 
-        # Get existing facts for validation (user-scoped)
-        existing = self.sqlite.get_facts(user_id=user_id)
+        # Get existing facts for validation (user/org-scoped)
+        existing = self.sqlite.get_facts(user_id=user_id, org_id=org_id)
 
         # Validate
         should_store, confidence, reason = self.validator.validate_before_storage(key, fact, existing)
 
         if not should_store:
-            print(f"[FACT REJECTED] user={user_id}, source={source}, key={key}: {reason}")
+            print(f"[FACT REJECTED] user={user_id}, org={org_id}, source={source}, key={key}: {reason}")
             return False
 
         # Store in SQLite with confidence
-        self.sqlite.save_fact(key, fact, category, confidence, user_id=user_id, source=source)
+        self.sqlite.save_fact(key, fact, category, confidence, user_id=user_id, source=source, org_id=org_id)
 
-        # Store in vector DB with user_id
+        # Store in vector DB with user_id and org_id
         self.vector.store_document(
             doc_id=f"fact_{user_id}_{key}_{hash(fact) & 0xFFFF}",
             text=fact,
-            metadata={"category": category, "confidence": confidence, "source": source, "user_id": user_id}
+            metadata={"category": category, "confidence": confidence, "source": source, "user_id": user_id, "org_id": org_id}
         )
 
-        print(f"[FACT STORED] user={user_id}, source={source}, key={key}, confidence={confidence:.2f}")
+        print(f"[FACT STORED] user={user_id}, org={org_id}, source={source}, key={key}, confidence={confidence:.2f}")
         return True
 
     def store_relationship(self, user_id: str, entity: str, relationship_type: str,
@@ -144,12 +178,15 @@ class MemoryManager:
 
     def retrieve(self, query: str, user_id: str = DEFAULT_USER_ID, n_results: int = 5) -> str:
         """Retrieve relevant facts and conversation context as natural language."""
-        # Search vector DB scoped by user
-        facts = self.vector.search_documents(query, n_results=n_results, user_id=user_id)
+        self._require_permission(user_id, "memory:read")
+        org_id = self._get_org_id(user_id)
+
+        # Search vector DB scoped by user and org
+        facts = self.vector.search_documents(query, n_results=n_results, user_id=user_id, org_id=org_id)
         facts = self.validator.validate_retrieved_facts(facts)
 
-        # Get structured facts from SQLite (user-scoped)
-        structured = self.sqlite.get_facts(user_id=user_id)
+        # Get structured facts from SQLite (user/org-scoped)
+        structured = self.sqlite.get_facts(user_id=user_id, org_id=org_id)
 
         lines = []
         if facts:
@@ -167,10 +204,12 @@ class MemoryManager:
 
     def store_conversation_turn(self, session: str, role: str, content: str, user_id: str = DEFAULT_USER_ID):
         """Store turn in vector DB for long-term semantic recall."""
+        self._require_permission(user_id, "memory:write")
+        org_id = self._get_org_id(user_id)
         counter_key = f"{user_id}:{session}"
         turn_id = self._turn_counter.get(counter_key, 0)
         self._turn_counter[counter_key] = turn_id + 1
-        self.vector.store_conversation_turn(session, role, content, turn_id, user_id=user_id)
+        self.vector.store_conversation_turn(session, role, content, turn_id, user_id=user_id, org_id=org_id)
 
     def is_explicit_memory_command(self, text: str) -> bool:
         """Check if user is explicitly asking to store a fact."""

@@ -28,12 +28,45 @@ class SQLiteStore:
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
 
+            # Organizations
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS organizations (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Departments
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS departments (
+                    id TEXT PRIMARY KEY,
+                    org_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
+                )
+            """)
+
+            # Roles
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS roles (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    permissions TEXT NOT NULL,  -- JSON list
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
             # Users table
             c.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id TEXT PRIMARY KEY,
                     name TEXT,
                     preferred_name TEXT,
+                    org_id TEXT,
+                    department_id TEXT,
+                    role_id TEXT,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     last_active TEXT DEFAULT CURRENT_TIMESTAMP,
                     rapport_level REAL DEFAULT 0,
@@ -42,9 +75,47 @@ class SQLiteStore:
                     tone_formality REAL DEFAULT 0.5,
                     tone_verbosity REAL DEFAULT 0.5,
                     tone_humor REAL DEFAULT 0.5,
-                    tone_proactivity REAL DEFAULT 0.5
+                    tone_proactivity REAL DEFAULT 0.5,
+                    FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE SET NULL,
+                    FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE SET NULL,
+                    FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE SET NULL
                 )
             """)
+
+            # Migrate enterprise columns if missing
+            for col in ["org_id", "department_id", "role_id"]:
+                if not self._column_exists(conn, "users", col):
+                    c.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
+
+            # Seed default organization, department, and roles
+            from core.rbac import DEFAULT_ROLE_PERMISSIONS
+            c.execute("INSERT OR IGNORE INTO organizations (id, name) VALUES ('default', 'Default Organization')")
+            c.execute("INSERT OR IGNORE INTO departments (id, org_id, name) VALUES ('default', 'default', 'Default Department')")
+            for role_id, perms in DEFAULT_ROLE_PERMISSIONS.items():
+                c.execute(
+                    "INSERT OR IGNORE INTO roles (id, name, permissions) VALUES (?, ?, ?)",
+                    (role_id, role_id, json.dumps(perms))
+                )
+
+            # Migration: refresh built-in roles that still have the legacy default
+            # permission set so existing DBs gain chat/reasoning:run/documents:*.
+            legacy_defaults = {
+                "user": ["memory:read", "memory:write", "tool:execute"],
+                "auditor": ["audit:read", "memory:read"],
+            }
+            for role_id, legacy_perms in legacy_defaults.items():
+                c.execute("SELECT permissions FROM roles WHERE id = ?", (role_id,))
+                row = c.fetchone()
+                if row:
+                    try:
+                        current = json.loads(row[0])
+                    except json.JSONDecodeError:
+                        current = []
+                    if current == legacy_perms:
+                        c.execute(
+                            "UPDATE roles SET permissions = ? WHERE id = ?",
+                            (json.dumps(DEFAULT_ROLE_PERMISSIONS[role_id]), role_id)
+                        )
 
             # Migrate tone columns if missing
             for col in ["tone_formality", "tone_verbosity", "tone_humor", "tone_proactivity"]:
@@ -85,6 +156,7 @@ class SQLiteStore:
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id TEXT DEFAULT 'ronny',
+                    org_id TEXT,
                     session TEXT DEFAULT 'default',
                     role TEXT NOT NULL,
                     content TEXT NOT NULL,
@@ -93,6 +165,8 @@ class SQLiteStore:
             """)
             if not self._column_exists(conn, "messages", "user_id"):
                 c.execute("ALTER TABLE messages ADD COLUMN user_id TEXT DEFAULT 'ronny'")
+            if not self._column_exists(conn, "messages", "org_id"):
+                c.execute("ALTER TABLE messages ADD COLUMN org_id TEXT")
 
             # Sessions table (migrate to composite PK on user_id + id)
             c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
@@ -102,6 +176,7 @@ class SQLiteStore:
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS sessions_new (
                         user_id TEXT DEFAULT 'ronny',
+                        org_id TEXT,
                         id TEXT DEFAULT 'default',
                         title TEXT,
                         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -111,13 +186,15 @@ class SQLiteStore:
                 """)
                 if not self._column_exists(conn, "sessions", "user_id"):
                     c.execute("""
-                        INSERT OR IGNORE INTO sessions_new (user_id, id, title, created_at, last_active)
-                        SELECT 'ronny', id, title, created_at, last_active FROM sessions
+                        INSERT OR IGNORE INTO sessions_new (user_id, org_id, id, title, created_at, last_active)
+                        SELECT 'ronny', 'default', id, title, created_at, last_active FROM sessions
                     """)
                 else:
+                    if not self._column_exists(conn, "sessions", "org_id"):
+                        c.execute("ALTER TABLE sessions ADD COLUMN org_id TEXT")
                     c.execute("""
-                        INSERT OR IGNORE INTO sessions_new (user_id, id, title, created_at, last_active)
-                        SELECT user_id, id, title, created_at, last_active FROM sessions
+                        INSERT OR IGNORE INTO sessions_new (user_id, org_id, id, title, created_at, last_active)
+                        SELECT user_id, COALESCE(org_id, 'default'), id, title, created_at, last_active FROM sessions
                     """)
                 c.execute("DROP TABLE sessions")
                 c.execute("ALTER TABLE sessions_new RENAME TO sessions")
@@ -126,6 +203,7 @@ class SQLiteStore:
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS sessions (
                         user_id TEXT DEFAULT 'ronny',
+                        org_id TEXT,
                         id TEXT DEFAULT 'default',
                         title TEXT,
                         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -138,10 +216,13 @@ class SQLiteStore:
             c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='facts'")
             facts_exists = c.fetchone()
             if facts_exists:
+                if not self._column_exists(conn, "facts", "org_id"):
+                    c.execute("ALTER TABLE facts ADD COLUMN org_id TEXT")
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS facts_new (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         user_id TEXT DEFAULT 'ronny',
+                        org_id TEXT,
                         key TEXT NOT NULL,
                         value TEXT,
                         category TEXT DEFAULT 'general',
@@ -154,13 +235,13 @@ class SQLiteStore:
                 """)
                 if not self._column_exists(conn, "facts", "user_id"):
                     c.execute("""
-                        INSERT OR IGNORE INTO facts_new (user_id, key, value, category, confidence, source, reinforcement_count, timestamp)
-                        SELECT 'ronny', key, value, category, confidence, 'explicit', 1, timestamp FROM facts
+                        INSERT OR IGNORE INTO facts_new (user_id, org_id, key, value, category, confidence, source, reinforcement_count, timestamp)
+                        SELECT 'ronny', 'default', key, value, category, confidence, 'explicit', 1, timestamp FROM facts
                     """)
                 else:
                     c.execute("""
-                        INSERT OR IGNORE INTO facts_new (user_id, key, value, category, confidence, source, reinforcement_count, timestamp)
-                        SELECT user_id, key, value, category, confidence, 'explicit', 1, timestamp FROM facts
+                        INSERT OR IGNORE INTO facts_new (user_id, org_id, key, value, category, confidence, source, reinforcement_count, timestamp)
+                        SELECT user_id, COALESCE(org_id, 'default'), key, value, category, confidence, source, reinforcement_count, timestamp FROM facts
                     """)
                 c.execute("DROP TABLE facts")
                 c.execute("ALTER TABLE facts_new RENAME TO facts")
@@ -169,6 +250,7 @@ class SQLiteStore:
                     CREATE TABLE IF NOT EXISTS facts (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         user_id TEXT DEFAULT 'ronny',
+                        org_id TEXT,
                         key TEXT NOT NULL,
                         value TEXT,
                         category TEXT DEFAULT 'general',
@@ -198,6 +280,7 @@ class SQLiteStore:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     doc_hash TEXT UNIQUE,
                     user_id TEXT,
+                    org_id TEXT,
                     filename TEXT,
                     content_type TEXT,
                     chunk_count INTEGER DEFAULT 0,
@@ -205,6 +288,8 @@ class SQLiteStore:
                     FOREIGN KEY (user_id) REFERENCES users(id)
                 )
             """)
+            if not self._column_exists(conn, "documents", "org_id"):
+                c.execute("ALTER TABLE documents ADD COLUMN org_id TEXT")
 
             # --- Identity & device tables (v0.9) ---
             c.execute("""
@@ -251,6 +336,7 @@ class SQLiteStore:
                 CREATE TABLE IF NOT EXISTS reasoning_runs (
                     id TEXT PRIMARY KEY,
                     user_id TEXT,
+                    org_id TEXT,
                     session TEXT,
                     trail_id TEXT,
                     goal TEXT,
@@ -261,6 +347,8 @@ class SQLiteStore:
                     FOREIGN KEY (user_id) REFERENCES users(id)
                 )
             """)
+            if not self._column_exists(conn, "reasoning_runs", "org_id"):
+                c.execute("ALTER TABLE reasoning_runs ADD COLUMN org_id TEXT")
             c.execute("""
                 CREATE TABLE IF NOT EXISTS reasoning_steps (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -406,41 +494,58 @@ class SQLiteStore:
             conn.commit()
 
     # --- Documents index ---
-    def has_document(self, doc_hash: str, user_id: str) -> bool:
+    def has_document(self, doc_hash: str, user_id: str, org_id: str = None) -> bool:
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
-            c.execute("SELECT 1 FROM documents WHERE doc_hash = ? AND user_id = ?", (doc_hash, user_id))
+            if org_id is None:
+                org_id = self._resolve_org_id(conn, user_id)
+            c.execute("SELECT 1 FROM documents WHERE doc_hash = ? AND user_id = ? AND org_id = ?",
+                      (doc_hash, user_id, org_id))
             return c.fetchone() is not None
 
     def add_document_index(self, doc_hash: str, user_id: str, filename: str,
-                           content_type: str, chunk_count: int):
+                           content_type: str, chunk_count: int, org_id: str = None):
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
+            if org_id is None:
+                org_id = self._resolve_org_id(conn, user_id)
             c.execute("""
-                INSERT INTO documents (doc_hash, user_id, filename, content_type, chunk_count)
-                VALUES (?, ?, ?, ?, ?)
-            """, (doc_hash, user_id, filename, content_type, chunk_count))
+                INSERT INTO documents (doc_hash, user_id, org_id, filename, content_type, chunk_count)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (doc_hash, user_id, org_id, filename, content_type, chunk_count))
             conn.commit()
 
-    def list_documents(self, user_id: str) -> list:
+    def list_documents(self, user_id: str, org_id: str = None) -> list:
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
+            if org_id is None:
+                org_id = self._resolve_org_id(conn, user_id)
             c.execute(
-                "SELECT doc_hash, filename, content_type, chunk_count, created_at FROM documents WHERE user_id = ? ORDER BY created_at DESC",
-                (user_id,)
+                "SELECT doc_hash, filename, content_type, chunk_count, created_at FROM documents WHERE user_id = ? AND org_id = ? ORDER BY created_at DESC",
+                (user_id, org_id)
             )
             return [self._row_to_dict(c, r) for r in c.fetchall()]
 
     # --- Users ---
-    def ensure_user(self, user_id: str, name: str = None):
-        """Create user record if it doesn't exist."""
+    def ensure_user(self, user_id: str, name: str = None, org_id: str = "default",
+                    department_id: str = "default", role_id: str = "user"):
+        """Create user record if it doesn't exist, assigning default org/dept/role."""
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
-            c.execute("SELECT id FROM users WHERE id = ?", (user_id,))
-            if not c.fetchone():
+            # Ensure default org/dept/role exist
+            c.execute("INSERT OR IGNORE INTO organizations (id, name) VALUES ('default', 'Default Organization')")
+            c.execute("INSERT OR IGNORE INTO departments (id, org_id, name) VALUES ('default', 'default', 'Default Department')")
+            c.execute("INSERT OR IGNORE INTO roles (id, name, permissions) VALUES ('admin', 'admin', '[\"*\"]')")
+            c.execute("INSERT OR IGNORE INTO roles (id, name, permissions) VALUES ('user', 'user', '[\"memory:read\",\"memory:write\",\"tool:execute\"]')")
+            c.execute("INSERT OR IGNORE INTO roles (id, name, permissions) VALUES ('auditor', 'auditor', '[\"audit:read\",\"memory:read\"]')")
+
+            c.execute("SELECT id, org_id FROM users WHERE id = ?", (user_id,))
+            row = c.fetchone()
+            if not row:
                 c.execute(
-                    "INSERT INTO users (id, name, created_at, last_active) VALUES (?, ?, datetime('now'), datetime('now'))",
-                    (user_id, name)
+                    """INSERT INTO users (id, name, org_id, department_id, role_id, created_at, last_active)
+                       VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))""",
+                    (user_id, name, org_id, department_id, role_id)
                 )
                 # Initialize default profile gaps
                 default_gaps = [
@@ -455,7 +560,73 @@ class SQLiteStore:
                     [(user_id, topic, priority) for topic, priority in default_gaps]
                 )
             else:
-                c.execute("UPDATE users SET last_active = datetime('now') WHERE id = ?", (user_id,))
+                updates = ["last_active = datetime('now')"]
+                params = []
+                if row[1] is None:
+                    updates.append("org_id = ?")
+                    params.append(org_id)
+                params.append(user_id)
+                c.execute(f"UPDATE users SET {', '.join(updates)} WHERE id = ?", tuple(params))
+            conn.commit()
+
+    def get_user_org(self, user_id: str) -> Optional[str]:
+        """Return the user's org_id, or None if not found."""
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("SELECT org_id FROM users WHERE id = ?", (user_id,))
+            row = c.fetchone()
+            return row[0] if row else None
+
+    def create_organization(self, org_id: str, name: str):
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("INSERT OR IGNORE INTO organizations (id, name) VALUES (?, ?)", (org_id, name))
+            conn.commit()
+
+    def create_department(self, dept_id: str, org_id: str, name: str):
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("INSERT OR IGNORE INTO departments (id, org_id, name) VALUES (?, ?, ?)",
+                      (dept_id, org_id, name))
+            conn.commit()
+
+    def create_role(self, role_id: str, name: str, permissions: list):
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("INSERT OR IGNORE INTO roles (id, name, permissions) VALUES (?, ?, ?)",
+                      (role_id, name, json.dumps(permissions)))
+            conn.commit()
+
+    def get_role_permissions(self, role_id: str) -> list:
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("SELECT permissions FROM roles WHERE id = ?", (role_id,))
+            row = c.fetchone()
+            if row and row[0]:
+                try:
+                    return json.loads(row[0])
+                except json.JSONDecodeError:
+                    return []
+            return []
+
+    def assign_user_role(self, user_id: str, org_id: str = None, department_id: str = None, role_id: str = None):
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            fields = []
+            params = []
+            if org_id is not None:
+                fields.append("org_id = ?")
+                params.append(org_id)
+            if department_id is not None:
+                fields.append("department_id = ?")
+                params.append(department_id)
+            if role_id is not None:
+                fields.append("role_id = ?")
+                params.append(role_id)
+            if not fields:
+                return
+            params.append(user_id)
+            c.execute(f"UPDATE users SET {', '.join(fields)} WHERE id = ?", tuple(params))
             conn.commit()
 
     def get_user(self, user_id: str) -> Optional[dict]:
@@ -565,17 +736,21 @@ class SQLiteStore:
             return [self._row_to_dict(c, r) for r in c.fetchall()]
 
     # --- Messages ---
-    def save_message(self, role: str, content: str, session: str = "default", user_id: str = DEFAULT_USER_ID):
+    def save_message(self, role: str, content: str, session: str = "default",
+                     user_id: str = DEFAULT_USER_ID, org_id: str = None):
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
-            # Upsert session scoped by user
+            if org_id is None:
+                org_id = self._resolve_org_id(conn, user_id)
+
+            # Upsert session scoped by user and org
             c.execute("SELECT id, title FROM sessions WHERE id = ? AND user_id = ?", (session, user_id))
             row = c.fetchone()
             if not row:
                 title = content[:40] + "..." if len(content) > 40 and role == "user" else (content if role == "user" else session)
                 c.execute(
-                    "INSERT INTO sessions (id, user_id, title, last_active) VALUES (?, ?, ?, datetime('now'))",
-                    (session, user_id, title)
+                    "INSERT INTO sessions (id, user_id, org_id, title, last_active) VALUES (?, ?, ?, ?, datetime('now'))",
+                    (session, user_id, org_id, title)
                 )
             elif row[1] is None and role == "user":
                 title = content[:40] + "..." if len(content) > 40 else content
@@ -590,30 +765,41 @@ class SQLiteStore:
                 )
 
             c.execute(
-                "INSERT INTO messages (user_id, session, role, content) VALUES (?, ?, ?, ?)",
-                (user_id, session, role, content)
+                "INSERT INTO messages (user_id, org_id, session, role, content) VALUES (?, ?, ?, ?, ?)",
+                (user_id, org_id, session, role, content)
             )
             conn.commit()
 
-    def get_recent(self, limit: int = 20, session: str = "default", user_id: str = DEFAULT_USER_ID) -> list:
+    def _resolve_org_id(self, conn, user_id: str) -> str:
+        c = conn.cursor()
+        c.execute("SELECT org_id FROM users WHERE id = ?", (user_id,))
+        row = c.fetchone()
+        return row[0] if row and row[0] else "default"
+
+    def get_recent(self, limit: int = 20, session: str = "default",
+                   user_id: str = DEFAULT_USER_ID, org_id: str = None) -> list:
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
+            if org_id is None:
+                org_id = self._resolve_org_id(conn, user_id)
             c.execute(
-                "SELECT role, content FROM messages WHERE user_id = ? AND session = ? ORDER BY id DESC LIMIT ?",
-                (user_id, session, limit)
+                "SELECT role, content FROM messages WHERE user_id = ? AND org_id = ? AND session = ? ORDER BY id DESC LIMIT ?",
+                (user_id, org_id, session, limit)
             )
             rows = c.fetchall()
             return [{"role": r[0], "content": r[1]} for r in reversed(rows)]
 
-    def get_session_history(self, session: str, user_id: str = DEFAULT_USER_ID) -> dict:
+    def get_session_history(self, session: str, user_id: str = DEFAULT_USER_ID, org_id: str = None) -> dict:
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
+            if org_id is None:
+                org_id = self._resolve_org_id(conn, user_id)
             c.execute(
-                "SELECT role, content, timestamp FROM messages WHERE user_id = ? AND session = ? ORDER BY id ASC",
-                (user_id, session)
+                "SELECT role, content, timestamp FROM messages WHERE user_id = ? AND org_id = ? AND session = ? ORDER BY id ASC",
+                (user_id, org_id, session)
             )
             rows = c.fetchall()
-            c.execute("SELECT title FROM sessions WHERE id = ? AND user_id = ?", (session, user_id))
+            c.execute("SELECT title FROM sessions WHERE id = ? AND user_id = ? AND org_id = ?", (session, user_id, org_id))
             title_row = c.fetchone()
             return {
                 "session": session,
@@ -649,12 +835,15 @@ class SQLiteStore:
             return c.rowcount > 0
 
     # --- Reasoning runs & steps (v0.10) ---
-    def create_reasoning_run(self, run_id: str, user_id: str, session: str, trail_id: str, goal: str):
+    def create_reasoning_run(self, run_id: str, user_id: str, session: str, trail_id: str, goal: str,
+                             org_id: str = None):
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
+            if org_id is None:
+                org_id = self._resolve_org_id(conn, user_id)
             c.execute(
-                "INSERT INTO reasoning_runs (id, user_id, session, trail_id, goal) VALUES (?, ?, ?, ?, ?)",
-                (run_id, user_id, session, trail_id, goal)
+                "INSERT INTO reasoning_runs (id, user_id, org_id, session, trail_id, goal) VALUES (?, ?, ?, ?, ?, ?)",
+                (run_id, user_id, org_id, session, trail_id, goal)
             )
             conn.commit()
 
@@ -702,50 +891,58 @@ class SQLiteStore:
 
     # --- Facts ---
     def save_fact(self, key: str, value: str, category: str = "general", confidence: float = 1.0,
-                  user_id: str = DEFAULT_USER_ID, source: str = "explicit"):
+                  user_id: str = DEFAULT_USER_ID, source: str = "explicit", org_id: str = None):
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
+            if org_id is None:
+                org_id = self._resolve_org_id(conn, user_id)
             c.execute("""
-                INSERT INTO facts (user_id, key, value, category, confidence, source, reinforcement_count)
-                VALUES (?, ?, ?, ?, ?, ?, 1)
+                INSERT INTO facts (user_id, org_id, key, value, category, confidence, source, reinforcement_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
                 ON CONFLICT(user_id, key) DO UPDATE SET
                     value=excluded.value,
                     confidence=min(1.0, excluded.confidence + 0.05 * facts.reinforcement_count),
                     source=excluded.source,
                     reinforcement_count=facts.reinforcement_count + 1,
                     timestamp=datetime('now')
-            """, (user_id, key, value, category, confidence, source))
+            """, (user_id, org_id, key, value, category, confidence, source))
             conn.commit()
 
-    def get_facts(self, category: str = None, user_id: str = DEFAULT_USER_ID) -> dict:
+    def get_facts(self, category: str = None, user_id: str = DEFAULT_USER_ID, org_id: str = None) -> dict:
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
+            if org_id is None:
+                org_id = self._resolve_org_id(conn, user_id)
             if category:
                 c.execute(
-                    "SELECT key, value FROM facts WHERE user_id = ? AND category = ? ORDER BY timestamp DESC",
-                    (user_id, category)
+                    "SELECT key, value FROM facts WHERE user_id = ? AND org_id = ? AND category = ? ORDER BY timestamp DESC",
+                    (user_id, org_id, category)
                 )
             else:
                 c.execute(
-                    "SELECT key, value FROM facts WHERE user_id = ? ORDER BY timestamp DESC",
-                    (user_id,)
+                    "SELECT key, value FROM facts WHERE user_id = ? AND org_id = ? ORDER BY timestamp DESC",
+                    (user_id, org_id)
                 )
             rows = c.fetchall()
             return {r[0]: r[1] for r in rows}
 
-    def get_facts_with_meta(self, user_id: str = DEFAULT_USER_ID) -> list:
+    def get_facts_with_meta(self, user_id: str = DEFAULT_USER_ID, org_id: str = None) -> list:
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
+            if org_id is None:
+                org_id = self._resolve_org_id(conn, user_id)
             c.execute(
-                "SELECT key, value, category, confidence, source, reinforcement_count FROM facts WHERE user_id = ? ORDER BY timestamp DESC",
-                (user_id,)
+                "SELECT key, value, category, confidence, source, reinforcement_count FROM facts WHERE user_id = ? AND org_id = ? ORDER BY timestamp DESC",
+                (user_id, org_id)
             )
             return [self._row_to_dict(c, r) for r in c.fetchall()]
 
-    def delete_fact(self, key: str, user_id: str = DEFAULT_USER_ID) -> bool:
+    def delete_fact(self, key: str, user_id: str = DEFAULT_USER_ID, org_id: str = None) -> bool:
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
-            c.execute("DELETE FROM facts WHERE user_id = ? AND key = ?", (user_id, key))
+            if org_id is None:
+                org_id = self._resolve_org_id(conn, user_id)
+            c.execute("DELETE FROM facts WHERE user_id = ? AND org_id = ? AND key = ?", (user_id, org_id, key))
             conn.commit()
             return c.rowcount > 0
 
