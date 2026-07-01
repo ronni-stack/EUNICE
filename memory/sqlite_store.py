@@ -97,25 +97,24 @@ class SQLiteStore:
                     (role_id, role_id, json.dumps(perms))
                 )
 
-            # Migration: refresh built-in roles that still have the legacy default
-            # permission set so existing DBs gain chat/reasoning:run/documents:*.
-            legacy_defaults = {
-                "user": ["memory:read", "memory:write", "tool:execute"],
-                "auditor": ["audit:read", "memory:read"],
-            }
-            for role_id, legacy_perms in legacy_defaults.items():
+            # Migration: add any missing default permissions to built-in roles.
+            # This keeps custom roles untouched while ensuring admin/user/auditor/legal
+            # gain new capabilities (e.g. research:run) as the product evolves.
+            for role_id, default_perms in DEFAULT_ROLE_PERMISSIONS.items():
                 c.execute("SELECT permissions FROM roles WHERE id = ?", (role_id,))
                 row = c.fetchone()
-                if row:
-                    try:
-                        current = json.loads(row[0])
-                    except json.JSONDecodeError:
-                        current = []
-                    if current == legacy_perms:
-                        c.execute(
-                            "UPDATE roles SET permissions = ? WHERE id = ?",
-                            (json.dumps(DEFAULT_ROLE_PERMISSIONS[role_id]), role_id)
-                        )
+                if not row:
+                    continue
+                try:
+                    current = set(json.loads(row[0]))
+                except json.JSONDecodeError:
+                    current = set()
+                missing = [p for p in default_perms if p not in current]
+                if missing:
+                    c.execute(
+                        "UPDATE roles SET permissions = ? WHERE id = ?",
+                        (json.dumps(sorted(current | set(default_perms))), role_id)
+                    )
 
             # Migrate tone columns if missing
             for col in ["tone_formality", "tone_verbosity", "tone_humor", "tone_proactivity"]:

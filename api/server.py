@@ -1128,21 +1128,28 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
 
 # --- Background Daemon Endpoints ---
 @app.get("/daemon/status")
-async def daemon_status(token: str = Depends(verify_token)):
+async def daemon_status(request: Request, token: str = Depends(verify_token)):
+    user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "admin:daemon")
     return daemon.get_daemon_status()
 
 @app.get("/daemon/alerts")
-async def daemon_alerts(token: str = Depends(verify_token)):
+async def daemon_alerts(request: Request, token: str = Depends(verify_token)):
+    user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "admin:daemon")
     return {"alerts": daemon.get_all_alerts()}
 
 @app.delete("/daemon/alerts/{trail_id}")
-async def clear_alert(trail_id: str, token: str = Depends(verify_token)):
+async def clear_alert(trail_id: str, request: Request, token: str = Depends(verify_token)):
+    user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "admin:daemon")
     daemon.clear_alert(trail_id)
     return {"cleared": True}
 
 @app.get("/trails")
 async def list_trails(request: Request, token: str = Depends(verify_token)):
     user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "memory:read")
     active = trails.get_active_trails(user_id=user_id)
     dormant = trails.get_dormant_trails(user_id=user_id)
     return {
@@ -1153,6 +1160,7 @@ async def list_trails(request: Request, token: str = Depends(verify_token)):
 @app.get("/trails/{trail_id}")
 async def get_trail(trail_id: str, request: Request, token: str = Depends(verify_token)):
     user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "memory:read")
     trail = trails.store.get_trail(trail_id, user_id=user_id)
     if not trail:
         raise HTTPException(status_code=404, detail="Trail not found")
@@ -1167,6 +1175,7 @@ async def get_trail(trail_id: str, request: Request, token: str = Depends(verify
 @app.post("/trails/{trail_id}/deadline")
 async def set_trail_deadline(trail_id: str, request: Request, token: str = Depends(verify_token)):
     user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "memory:write")
     body = await request.json()
     deadline = body.get("deadline")
     if not deadline:
@@ -1177,6 +1186,7 @@ async def set_trail_deadline(trail_id: str, request: Request, token: str = Depen
 @app.post("/trails/{trail_id}/status")
 async def set_trail_status(trail_id: str, request: Request, token: str = Depends(verify_token)):
     user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "memory:write")
     body = await request.json()
     status = body.get("status")
     if status not in ["active", "dormant", "archived"]:
@@ -1186,7 +1196,7 @@ async def set_trail_status(trail_id: str, request: Request, token: str = Depends
 
 
 # --- Document Ingestion ---
-@app.post("/docs/upload")
+@app.post("/documents/upload")
 async def upload_document(
     request: Request,
     file: UploadFile = File(...),
@@ -1195,6 +1205,7 @@ async def upload_document(
 ):
     """Upload a PDF, TXT, or MD document for RAG retrieval. Accepts multipart form."""
     user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "documents:write")
     upload_name = filename or file.filename or "upload"
     body = await file.read()
 
@@ -1218,16 +1229,19 @@ async def upload_document(
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}")
 
 
-@app.get("/docs")
+@app.get("/documents")
 async def list_documents(request: Request, token: str = Depends(verify_token)):
     """List uploaded documents for the current user."""
     user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "documents:read")
     return {"documents": memory.list_documents(user_id)}
 
 
 @app.post("/research")
 async def research_endpoint(request: Request, token: str = Depends(verify_token)):
     """Research a query on the web and return a summarized answer with sources."""
+    user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "research:run")
     body = await request.json()
     query = body.get("query", "").strip()
     max_results = min(int(body.get("max_results", 5)), 10)
@@ -1250,6 +1264,7 @@ async def list_files(request: Request, path: str = "", token: str = Depends(veri
     """List files in the user's sandboxed workspace."""
     from core.file_manager import FileManager
     user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "tool:file_manager")
     try:
         fm = FileManager(user_id)
         return {"entries": fm.list(path)}
@@ -1262,6 +1277,7 @@ async def read_file(request: Request, path: str, token: str = Depends(verify_tok
     """Read a file from the user's sandboxed workspace."""
     from core.file_manager import FileManager
     user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "tool:file_manager")
     try:
         fm = FileManager(user_id)
         return {"content": fm.read(path)}
@@ -1274,6 +1290,7 @@ async def write_file(request: Request, token: str = Depends(verify_token)):
     """Write or append to a file in the user's sandboxed workspace."""
     from core.file_manager import FileManager
     user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "tool:file_manager")
     body = await request.json()
     path = body.get("path", "")
     content = body.get("content", "")
@@ -1292,6 +1309,7 @@ async def upload_file(request: Request, file: UploadFile = File(...), path: str 
     """Upload a binary file into the user's sandboxed workspace."""
     from core.file_manager import FileManager
     user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "tool:file_manager")
     try:
         fm = FileManager(user_id)
         target_dir = fm._resolve_path(path) if path else fm.workspace
@@ -1310,6 +1328,7 @@ async def delete_file(request: Request, path: str, token: str = Depends(verify_t
     """Delete a file or directory in the user's sandboxed workspace."""
     from core.file_manager import FileManager
     user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "tool:file_manager")
     try:
         fm = FileManager(user_id)
         return fm.delete(path, confirmed=True)
@@ -1323,6 +1342,7 @@ async def coder_endpoint(request: Request, token: str = Depends(verify_token)):
     """Generate, edit, analyze, or run code in the user's sandboxed workspace."""
     from core.coder import CoderAgent, CoderError
     user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "tool:coder")
     body = await request.json()
     action = body.get("action", "generate")
     req_text = body.get("request", "")

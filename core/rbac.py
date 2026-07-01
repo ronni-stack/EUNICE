@@ -32,6 +32,7 @@ DEFAULT_ROLE_PERMISSIONS = {
         "memory:write",
         "tool:*",
         "reasoning:run",
+        "research:run",
         "documents:read",
         "documents:write",
     ],
@@ -43,6 +44,7 @@ DEFAULT_ROLE_PERMISSIONS = {
         "tool:notes",
         "tool:legal:review",
         "reasoning:run",
+        "research:run",
         "documents:read",
     ],
 }
