@@ -21,7 +21,7 @@ FILES_DIR.mkdir(parents=True, exist_ok=True)
 OLLAMA_URL = os.getenv("EUNICE_OLLAMA_URL", "http://localhost:11434")
 #MODEL_NAME = os.getenv("EUNICE_MODEL", "llama3.2:3b")
 #MODEL_NAME = os.getenv("EUNICE_MODEL", "phi4")
-MODEL_NAME = os.getenv("EUNICE_MODEL", "phi4-mini:latest")
+MODEL_NAME = os.getenv("EUNICE_MODEL", "llama3.2:3b")
 OLLAMA_TIMEOUT = float(os.getenv("EUNICE_OLLAMA_TIMEOUT", "300.0"))
 MEMORY_LIMIT = int(os.getenv("EUNICE_MEMORY_LIMIT", "20"))
 
@@ -69,4 +69,4 @@ RISK_MEDIUM = {"add_event", "send_email_draft", "self_update"}
 RISK_HIGH = {"run_code", "get_balance"}
 RISK_CRITICAL = {"transfer_funds", "delete_file", "share_data"}
 
-VERSION = "0.9"
+VERSION = "0.10"

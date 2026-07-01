@@ -2,7 +2,7 @@
 # Copyright 2026 Ronny Koome
 # Licensed under the Elastic License 2.0. See LICENSE for details.
 
-"""EUNICE v0.9 — Multi-User Identity + Autonomous Discovery
+"""EUNICE v0.10 — ReAct Agentic Reasoning + Multi-Step Planning
 Associative memory, proactive retrieval, background daemon integration, onboarding,
 identity/device model, and session-token auth.
 """
@@ -28,6 +28,7 @@ from core.fact_extractor import FactExtractor
 from core.tone import format_tone_instruction
 from core.ingestion import IngestionPipeline
 from core.research import ResearchAssistant
+from core.agent import ReActAgent
 from memory.manager import MemoryManager
 from memory.trail_manager import TrailManager
 from core.intent import IntentClassifier
@@ -65,6 +66,7 @@ daemon = BackgroundDaemon(check_interval=900)
 fact_extractor = FactExtractor(memory)
 ingestion = IngestionPipeline(memory)
 research = ResearchAssistant(memory)
+react_agent = ReActAgent(memory=memory, tools=tools, research=research)
 identity_manager = IdentityManager()
 logger = logging.getLogger("eunice.api")
 
@@ -904,6 +906,51 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
                   f'data: {json.dumps({"done": True, "full": response})}\n\n']),
             media_type="text/event-stream"
         )
+
+    # === HANDLE AGENTIC / MULTI-STEP REASONING ===
+    if intent.type == "agentic":
+        agentic_trail_id = trails.detect_or_create_trail(user_msg, session, user_id=user_id)
+        trails.activate_trail(agentic_trail_id, trigger_type="agentic", user_id=user_id)
+        logger.info(f"[CHAT] user={user_id} agentic trail={agentic_trail_id}")
+
+        async def agentic_event_stream():
+            full_response = ""
+            try:
+                async for event in react_agent.run(
+                    goal=user_msg,
+                    session=session,
+                    user_id=user_id,
+                    max_steps=5,
+                    trail_id=agentic_trail_id or ""
+                ):
+                    event_type = event.get("type")
+                    if event_type == "thought":
+                        yield f'data: {json.dumps({"type": "thought", "content": event.get("content", "")})}\n\n'
+                    elif event_type == "action":
+                        yield f'data: {json.dumps({"type": "action", "tool": event.get("tool", ""), "params": event.get("params", {})})}\n\n'
+                    elif event_type == "observation":
+                        yield f'data: {json.dumps({"type": "observation", "content": event.get("content", "")})}\n\n'
+                    elif event_type == "pending":
+                        full_response = event.get("message", "")
+                        yield f'data: {json.dumps({"type": "pending", "tool": event.get("tool", ""), "message": full_response})}\n\n'
+                    elif event_type == "final":
+                        full_response = event.get("content", "")
+                        yield f'data: {json.dumps({"token": full_response, "done": False})}\n\n'
+                    elif event_type == "error":
+                        full_response = event.get("content", "")
+                        yield f'data: {json.dumps({"token": full_response, "done": False})}\n\n'
+            except Exception as e:
+                import traceback
+                logger.exception(f"[AGENTIC ERROR] user={user_id} {traceback.format_exc()}")
+                full_response = f"[Agentic reasoning failed: {type(e).__name__}: {str(e)}]"
+                yield f'data: {json.dumps({"token": full_response, "done": False})}\n\n'
+            finally:
+                memory.save_interaction(session, user_msg, full_response, [], user_id=user_id)
+                if agentic_trail_id:
+                    trails.append_to_trail(agentic_trail_id, full_response, role="assistant", user_id=user_id, source_type="chat")
+                yield f'data: {json.dumps({"done": True, "full": full_response})}\n\n'
+
+        return StreamingResponse(agentic_event_stream(), media_type="text/event-stream")
 
     if is_memory_question(user_msg):
         logger.info(f"[CHAT] user={user_id} intent=memory_question")

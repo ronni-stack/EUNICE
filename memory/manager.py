@@ -85,6 +85,20 @@ class MemoryManager:
     def rename_session(self, session: str, new_name: str, user_id: str = DEFAULT_USER_ID):
         return self.sqlite.rename_session(session, new_name, user_id)
 
+    # --- Reasoning (v0.10) ---
+    def create_reasoning_run(self, run_id: str, user_id: str, session: str, trail_id: str, goal: str):
+        return self.sqlite.create_reasoning_run(run_id, user_id, session, trail_id, goal)
+
+    def save_reasoning_step(self, run_id: str, step_index: int, thought: str, action: str,
+                            action_input: dict, observation: str):
+        return self.sqlite.save_reasoning_step(run_id, step_index, thought, action, action_input, observation)
+
+    def finish_reasoning_run(self, run_id: str, status: str, final_answer: str = ""):
+        return self.sqlite.finish_reasoning_run(run_id, status, final_answer)
+
+    def get_reasoning_run(self, run_id: str) -> dict:
+        return self.sqlite.get_reasoning_run(run_id)
+
     # --- Semantic (ChromaDB) with Validation ---
     def store_fact(self, fact: str, category: str = "general", source: str = "explicit",
                    user_id: str = DEFAULT_USER_ID) -> bool:

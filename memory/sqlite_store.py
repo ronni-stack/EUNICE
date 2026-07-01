@@ -246,6 +246,35 @@ class SQLiteStore:
                 )
             """)
 
+            # --- Reasoning runs & steps (v0.10) ---
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS reasoning_runs (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT,
+                    session TEXT,
+                    trail_id TEXT,
+                    goal TEXT,
+                    status TEXT DEFAULT 'running',
+                    final_answer TEXT,
+                    started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    finished_at TEXT,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS reasoning_steps (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT NOT NULL,
+                    step_index INTEGER,
+                    thought TEXT,
+                    action TEXT,
+                    action_input TEXT,
+                    observation TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (run_id) REFERENCES reasoning_runs(id) ON DELETE CASCADE
+                )
+            """)
+
             # Migration: existing users rows represent both identity and device in v0.8
             c.execute("SELECT COUNT(*) FROM identities")
             if c.fetchone()[0] == 0:
@@ -618,6 +647,58 @@ class SQLiteStore:
             )
             conn.commit()
             return c.rowcount > 0
+
+    # --- Reasoning runs & steps (v0.10) ---
+    def create_reasoning_run(self, run_id: str, user_id: str, session: str, trail_id: str, goal: str):
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute(
+                "INSERT INTO reasoning_runs (id, user_id, session, trail_id, goal) VALUES (?, ?, ?, ?, ?)",
+                (run_id, user_id, session, trail_id, goal)
+            )
+            conn.commit()
+
+    def save_reasoning_step(self, run_id: str, step_index: int, thought: str, action: str,
+                            action_input: dict, observation: str):
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute(
+                """INSERT INTO reasoning_steps
+                   (run_id, step_index, thought, action, action_input, observation)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (run_id, step_index, thought, action, json.dumps(action_input), observation)
+            )
+            conn.commit()
+
+    def finish_reasoning_run(self, run_id: str, status: str, final_answer: str = ""):
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute(
+                "UPDATE reasoning_runs SET status = ?, final_answer = ?, finished_at = datetime('now') WHERE id = ?",
+                (status, final_answer, run_id)
+            )
+            conn.commit()
+
+    def get_reasoning_run(self, run_id: str) -> dict:
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("SELECT * FROM reasoning_runs WHERE id = ?", (run_id,))
+            row = c.fetchone()
+            if not row:
+                return None
+            cols = [d[0] for d in c.description]
+            run = dict(zip(cols, row))
+            c.execute("SELECT * FROM reasoning_steps WHERE run_id = ? ORDER BY step_index", (run_id,))
+            step_cols = [d[0] for d in c.description]
+            run["steps"] = []
+            for r in c.fetchall():
+                step = dict(zip(step_cols, r))
+                try:
+                    step["action_input"] = json.loads(step["action_input"])
+                except Exception:
+                    pass
+                run["steps"].append(step)
+            return run
 
     # --- Facts ---
     def save_fact(self, key: str, value: str, category: str = "general", confidence: float = 1.0,

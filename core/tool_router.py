@@ -16,6 +16,16 @@ from config import TOOLS_DIR, DATA_DIR, get_notes_path, RISK_LOW, RISK_MEDIUM, R
 class ToolRouter:
     """Routes tool calls with safety enforcement and audit logging."""
 
+    TOOL_DESCRIPTIONS = {
+        "network_scan": "Scan the local network for connected devices. Params: {'subnet': '192.168.1.0/24'}",
+        "notes": "Append to, read, or search the user's notes. Params: {'action': 'append|read|search', 'content': '...', 'tag': 'note'}",
+        "get_balance": "Check the user's bank balance from the local ledger. Requires confirmation.",
+        "self_update": "Check for EUNICE software updates and create backups.",
+        "transfer_funds": "Transfer money between accounts. Always denied (requires biometric confirmation).",
+        "coder": "Generate, edit, analyze, or run code in the user's sandboxed workspace. Params: {'action': 'generate|edit|analyze|run', 'request': '...', 'filename': '...', 'language': 'python'}",
+        "file_manager": "Read, write, list, or delete files in the user's sandboxed workspace. Params: {'action': 'read|write|list|delete', 'path': '...', 'content': '...'}",
+    }
+
     def __init__(self):
         self.risk_map = {}
         for t in RISK_LOW: self.risk_map[t] = "low"
@@ -28,7 +38,7 @@ class ToolRouter:
         os.makedirs(DATA_DIR, exist_ok=True)
 
     def get_available_tools(self) -> list:
-        """Scan tools/ directory and return tool metadata with risk tiers."""
+        """Scan tools/ directory and return tool metadata with risk tiers and descriptions."""
         tools = []
         if not TOOLS_DIR.exists():
             return tools
@@ -37,7 +47,7 @@ class ToolRouter:
                 tool_name = filename[:-3]
                 tools.append({
                     "name": tool_name,
-                    "description": f"Execute the {tool_name} tool.",
+                    "description": self.TOOL_DESCRIPTIONS.get(tool_name, f"Execute the {tool_name} tool."),
                     "risk": self.risk_map.get(tool_name, "unknown")
                 })
         return tools
