@@ -168,6 +168,11 @@ def is_memory_question(text: str) -> bool:
         r"recall our",
         r"what about",
         r"how about",
+        r"my name",
+        r"who am i",
+        r"name of the user",
+        r"the user's name",
+        r"what am i called",
     ]
     return any(re.search(p, text_lower) for p in patterns)
 
@@ -774,6 +779,36 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
 
     user_name = _get_user_name(user_id)
 
+    # === MEMORY QUESTIONS (check early before research/tool handlers can short-circuit)
+    if is_memory_question(user_msg):
+        logger.info(f"[CHAT] user={user_id} intent=memory_question")
+        facts = memory.retrieve(user_msg, user_id=user_id)
+        logger.debug(f"[CHAT] user={user_id} retrieved_facts={facts[:200]!r}")
+        if not facts or facts.strip() == "" or not facts_are_relevant(facts, user_msg):
+            denial = await generate_dynamic_denial(user_msg)
+            logger.info(f"[CHAT] user={user_id} memory_denial={denial!r}")
+            memory.save_interaction(session, user_msg, denial, [], user_id=user_id)
+            memory.store_conversation_turn(session, "user", user_msg, user_id=user_id)
+            memory.store_conversation_turn(session, "assistant", denial, user_id=user_id)
+            return StreamingResponse(
+                iter([
+                    f'data: {json.dumps({"token": denial, "done": False})}\n\n',
+                    f'data: {json.dumps({"done": True, "full": denial})}\n\n'
+                ]),
+                media_type="text/event-stream"
+            )
+        clean_facts = sanitize_response(facts)
+        memory.save_interaction(session, user_msg, clean_facts, [], user_id=user_id)
+        memory.store_conversation_turn(session, "user", user_msg, user_id=user_id)
+        memory.store_conversation_turn(session, "assistant", clean_facts, user_id=user_id)
+        return StreamingResponse(
+            iter([
+                f'data: {json.dumps({"token": clean_facts, "done": False})}\n\n',
+                f'data: {json.dumps({"done": True, "full": clean_facts})}\n\n'
+            ]),
+            media_type="text/event-stream"
+        )
+
     # === INTENT CLASSIFICATION ===
     classifier = IntentClassifier()
     intent = classifier.classify(user_msg)
@@ -951,35 +986,6 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
                 yield f'data: {json.dumps({"done": True, "full": full_response})}\n\n'
 
         return StreamingResponse(agentic_event_stream(), media_type="text/event-stream")
-
-    if is_memory_question(user_msg):
-        logger.info(f"[CHAT] user={user_id} intent=memory_question")
-        facts = memory.retrieve(user_msg, user_id=user_id)
-        logger.debug(f"[CHAT] user={user_id} retrieved_facts={facts[:200]!r}")
-        if not facts or facts.strip() == "" or not facts_are_relevant(facts, user_msg):
-            denial = await generate_dynamic_denial(user_msg)
-            logger.info(f"[CHAT] user={user_id} memory_denial={denial!r}")
-            memory.save_interaction(session, user_msg, denial, [], user_id=user_id)
-            memory.store_conversation_turn(session, "user", user_msg, user_id=user_id)
-            memory.store_conversation_turn(session, "assistant", denial, user_id=user_id)
-            return StreamingResponse(
-                iter([
-                    f'data: {json.dumps({"token": denial, "done": False})}\n\n',
-                    f'data: {json.dumps({"done": True, "full": denial})}\n\n'
-                ]),
-                media_type="text/event-stream"
-            )
-        clean_facts = sanitize_response(facts)
-        memory.save_interaction(session, user_msg, clean_facts, [], user_id=user_id)
-        memory.store_conversation_turn(session, "user", user_msg, user_id=user_id)
-        memory.store_conversation_turn(session, "assistant", clean_facts, user_id=user_id)
-        return StreamingResponse(
-            iter([
-                f'data: {json.dumps({"token": clean_facts, "done": False})}\n\n',
-                f'data: {json.dumps({"done": True, "full": clean_facts})}\n\n'
-            ]),
-            media_type="text/event-stream"
-        )
 
     # === TRAIL DETECTION & ACTIVATION ===
     trail_id = trails.detect_or_create_trail(user_msg, session, user_id=user_id)
