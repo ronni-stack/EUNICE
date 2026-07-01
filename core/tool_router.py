@@ -9,10 +9,9 @@ Fixes: High-risk auto-execution, missing confirmation flow, poor error messages.
 import json
 import os
 import subprocess
-from typing import Any
-from datetime import datetime
 from config import TOOLS_DIR, DATA_DIR, get_notes_path, RISK_LOW, RISK_MEDIUM, RISK_HIGH, RISK_CRITICAL
 from core.rbac import has_permission, get_user_permissions
+from core.audit import get_audit_logger
 from memory.sqlite_store import SQLiteStore
 
 class ToolRouter:
@@ -35,12 +34,14 @@ class ToolRouter:
         for t in RISK_HIGH: self.risk_map[t] = "high"
         for t in RISK_CRITICAL: self.risk_map[t] = "critical"
 
-        # Audit log for all tool executions
-        self.audit_log_path = DATA_DIR / "tool_audit.log"
-        os.makedirs(DATA_DIR, exist_ok=True)
-
         # RBAC lookup; shared SQLiteStore avoids per-call re-instantiation
         self.sqlite_store = sqlite_store or SQLiteStore()
+
+        # Unified enterprise audit logger
+        self.audit = get_audit_logger()
+
+    def _get_org_id(self, user_id: str) -> str:
+        return self.sqlite_store.get_user_org(user_id) or "default"
 
     def get_available_tools(self) -> list:
         """Scan tools/ directory and return tool metadata with risk tiers and descriptions."""
@@ -57,41 +58,42 @@ class ToolRouter:
                 })
         return tools
 
-    def _log_audit(self, tool_name: str, risk: str, params: dict, result: str, approved: bool = False):
-        """Log every tool execution attempt."""
-        timestamp = datetime.now().isoformat()
-        status = "APPROVED" if approved else "DENIED"
-        entry = f"[{timestamp}] {status} | {risk.upper()} | {tool_name} | params={json.dumps(params)} | result={result[:100]}\n"
-        try:
-            with open(self.audit_log_path, "a", encoding="utf-8") as f:
-                f.write(entry)
-        except Exception:
-            pass
+    def _log_audit(self, tool_name: str, risk: str, params: dict, result: str, status: str = "success"):
+        """Log every tool execution attempt via the unified audit logger."""
+        user_id = params.get("user_id", "anonymous")
+        self.audit.log_tool_call(
+            tool_name=tool_name,
+            user_id=user_id,
+            org_id=self._get_org_id(user_id),
+            params=params,
+            result=result,
+            status=status,
+            risk=risk,
+        )
 
     async def execute(self, tool_name: str, params: dict, permissions: list = None) -> str:
         """Execute a tool with RBAC, risk-tier checks, and confirmation requirements."""
+        risk = self.risk_map.get(tool_name, "unknown")
         user_id = params.get("user_id")
+
         if user_id:
             perms = permissions if permissions is not None else get_user_permissions(self.sqlite_store, user_id)
             if not has_permission(perms, f"tool:{tool_name}") and not has_permission(perms, "tool:execute"):
-                risk = self.risk_map.get(tool_name, "unknown")
                 msg = f"[DENIED: you do not have permission to use '{tool_name}']"
-                self._log_audit(tool_name, risk, params, msg, approved=False)
+                self._log_audit(tool_name, risk, params, msg, status="denied")
                 return msg
-
-        risk = self.risk_map.get(tool_name, "unknown")
 
         # CRITICAL: Always deny
         if risk == "critical":
             msg = f"[DENIED: `{tool_name}` requires explicit biometric confirmation. Not yet implemented.]"
-            self._log_audit(tool_name, risk, params, msg, approved=False)
+            self._log_audit(tool_name, risk, params, msg, status="denied")
             return msg
 
         # HIGH: Require explicit confirmation parameter
         if risk == "high":
             if not params.get("confirmed", False):
                 msg = f"[PENDING: `{tool_name}` requires approval. Say 'confirm {tool_name}' to execute.]"
-                self._log_audit(tool_name, risk, params, msg, approved=False)
+                self._log_audit(tool_name, risk, params, msg, status="pending")
                 return msg
             # If confirmed, proceed but log heavily
             print(f"[HIGH RISK] Executing {tool_name} with CONFIRMED status")
@@ -102,7 +104,7 @@ class ToolRouter:
 
         # LOW: Execute silently
         result = self._run_subprocess(tool_name, params)
-        self._log_audit(tool_name, risk, params, result, approved=True)
+        self._log_audit(tool_name, risk, params, result, status="success")
         return result
 
     def _run_subprocess(self, tool_name: str, params: dict) -> str:

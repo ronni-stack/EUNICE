@@ -12,6 +12,7 @@ from config import BASE_DIR
 from core.inference import generate_non_stream
 from core.tool_router import ToolRouter
 from core.rbac import has_permission, get_user_permissions
+from core.audit import get_audit_logger
 from core.coder import CoderAgent
 from core.research import ResearchAssistant
 from core.file_manager import FileManager
@@ -35,6 +36,7 @@ class ReActAgent:
         self.memory = memory
         self.tools = tools or ToolRouter()
         self.research = research
+        self.audit = get_audit_logger()
         self.prompt_path = BASE_DIR / "core" / "prompts" / "react.txt"
         self.prompt_template = self.prompt_path.read_text(encoding="utf-8") if self.prompt_path.exists() else self._default_prompt()
 
@@ -122,6 +124,11 @@ Prior Steps:
             return get_user_permissions(self.memory.sqlite, user_id)
         return []
 
+    def _get_org_id(self, user_id: str) -> str:
+        if self.memory and hasattr(self.memory, "sqlite"):
+            return self.memory.sqlite.get_user_org(user_id) or "default"
+        return "default"
+
     async def _execute_action(self, action: str, params: dict, user_id: str) -> str:
         """Execute a single action and return observation string."""
         # Special internal tools (must be handled before subprocess tools to avoid
@@ -199,12 +206,16 @@ Prior Steps:
     async def run(self, goal: str, session: str, user_id: str, max_steps: int = 5, trail_id: str = ""):
         """Run the ReAct loop and yield events."""
         permissions = self._resolve_permissions(user_id)
+        org_id = self._get_org_id(user_id)
         if permissions and not has_permission(permissions, "reasoning:run"):
-            yield {"type": "error", "content": "[DENIED: you do not have permission to run the reasoning agent]"}
+            msg = "[DENIED: you do not have permission to run the reasoning agent]"
+            self.audit.log_permission_denied(user_id, "reasoning:run", resource="agent", org_id=org_id)
+            yield {"type": "error", "content": msg}
             return
 
         steps: List[ReActStep] = []
         run_id = str(uuid.uuid4())
+        self.audit.log_reasoning_run(run_id, user_id, goal=goal, status="started", org_id=org_id, session=session)
         if self.memory:
             self.memory.create_reasoning_run(run_id, user_id, session, trail_id or "", goal)
         tool_descriptions = self._format_tool_descriptions()
@@ -231,6 +242,7 @@ Prior Steps:
                 steps.append(step)
                 if self.memory:
                     self.memory.finish_reasoning_run(run_id, "completed", parsed["answer"])
+                self.audit.log_reasoning_run(run_id, user_id, goal=goal, status="completed", org_id=org_id, session=session)
                 yield {"type": "final", "content": parsed["answer"], "steps": steps}
                 return
 
@@ -256,6 +268,9 @@ Prior Steps:
             step.observation = observation
             yield {"type": "observation", "content": observation, "step": step}
 
+            self.audit.log_reasoning_step(run_id, user_id, step_idx, step.thought, step.action, observation,
+                                          status="success", org_id=org_id, session=session)
+
             if self.memory:
                 self.memory.save_reasoning_step(run_id, step_idx, step.thought, step.action, step.action_input, observation)
 
@@ -263,6 +278,8 @@ Prior Steps:
             if observation.startswith("[PENDING:"):
                 if self.memory:
                     self.memory.finish_reasoning_run(run_id, "pending_approval", observation)
+                self.audit.log_reasoning_run(run_id, user_id, goal=goal, status="pending_approval",
+                                             org_id=org_id, session=session)
                 yield {"type": "pending", "tool": step.action, "message": observation, "steps": steps}
                 return
 
@@ -271,4 +288,5 @@ Prior Steps:
         # Max steps reached without final answer
         if self.memory:
             self.memory.finish_reasoning_run(run_id, "max_steps", "")
+        self.audit.log_reasoning_run(run_id, user_id, goal=goal, status="max_steps", org_id=org_id, session=session)
         yield {"type": "error", "content": f"Reached maximum steps ({max_steps}) without a final answer."}

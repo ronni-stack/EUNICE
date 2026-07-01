@@ -14,9 +14,11 @@ from fastapi import HTTPException, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from config import API_KEY
 from core.identity import IdentityManager, IdentityInfo
+from core.audit import get_audit_logger
 
 security = HTTPBearer(auto_error=False)
 identity_manager = IdentityManager()
+audit = get_audit_logger()
 
 
 @dataclass
@@ -31,12 +33,16 @@ class AuthContext:
 async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
     """Validate static API key or session JWT."""
     if not credentials:
+        audit.log_auth_event("token_validation", status="failure",
+                             details={"reason": "missing_credentials"})
         raise HTTPException(status_code=401, detail="Missing API key or session token. Set it in Settings or log in.")
     token = credentials.credentials
     if token == API_KEY:
         return token
     if identity_manager.verify_session_token(token):
         return token
+    audit.log_auth_event("token_validation", status="failure",
+                         details={"reason": "invalid_token"})
     raise HTTPException(status_code=401, detail="Wrong API key or session token. Check Settings or log in again.")
 
 
@@ -48,12 +54,22 @@ def _resolve_device_id(request: Request) -> str:
     return ""
 
 
+def _client_ip(request: Request) -> str:
+    return request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown")
+
+
 async def get_auth_context(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ) -> AuthContext:
     """Resolve identity and device from API key + device header or JWT."""
+    ip = _client_ip(request)
+    device_id = _resolve_device_id(request)
+
     if not credentials:
+        audit.log_auth_event("auth", status="failure",
+                             details={"reason": "missing_credentials"},
+                             ip=ip, device_id=device_id)
         raise HTTPException(status_code=401, detail="Missing authorization. Set API key or log in.")
 
     token = credentials.credentials
@@ -61,6 +77,8 @@ async def get_auth_context(
     # 1. Try JWT session token first
     identity = identity_manager.verify_session_token(token)
     if identity:
+        audit.log_auth_event("auth", user_id=identity.identity_id, status="success",
+                             details={"method": "jwt"}, ip=ip, device_id=identity.device_id)
         return AuthContext(
             identity_id=identity.identity_id,
             device_id=identity.device_id,
@@ -71,12 +89,16 @@ async def get_auth_context(
 
     # 2. Fall back to static API key + device header
     if token == API_KEY:
-        device_id = _resolve_device_id(request)
         if not device_id:
+            audit.log_auth_event("auth", status="failure",
+                                 details={"reason": "missing_device_header", "method": "api_key"},
+                                 ip=ip)
             raise HTTPException(status_code=401, detail="API key auth requires X-EUNICE-Device-ID header.")
 
         identity = identity_manager.get_identity_by_device(device_id)
         if identity:
+            audit.log_auth_event("auth", user_id=identity.identity_id, status="success",
+                                 details={"method": "api_key"}, ip=ip, device_id=device_id)
             return AuthContext(
                 identity_id=identity.identity_id,
                 device_id=device_id,
@@ -95,6 +117,9 @@ async def get_auth_context(
             device_id=device_id,
             device_name=device_id,
         )
+        audit.log_auth_event("auth", user_id=info.identity_id, status="success",
+                             details={"method": "api_key", "auto_created_identity": True},
+                             ip=ip, device_id=device_id)
         return AuthContext(
             identity_id=info.identity_id,
             device_id=device_id,
@@ -103,6 +128,8 @@ async def get_auth_context(
             auth_method="api_key",
         )
 
+    audit.log_auth_event("auth", status="failure",
+                         details={"reason": "invalid_token"}, ip=ip, device_id=device_id)
     raise HTTPException(status_code=401, detail="Invalid API key or session token.")
 
 

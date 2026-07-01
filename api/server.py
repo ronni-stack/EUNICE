@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from config import BASE_DIR, DATA_DIR, VERSION, MODEL_NAME, MEMORY_LIMIT, OLLAMA_URL, OLLAMA_TIMEOUT
 from core.auth import verify_token, get_current_user, get_auth_context, AuthContext
 from core.rbac import has_permission, get_user_permissions
+from core.audit import get_audit_logger
 from core.identity import IdentityManager
 from core.personality import load_personality, save_personality
 from core.inference import stream_chat, generate_non_stream
@@ -69,6 +70,7 @@ ingestion = IngestionPipeline(memory)
 research = ResearchAssistant(memory)
 react_agent = ReActAgent(memory=memory, tools=tools, research=research)
 identity_manager = IdentityManager()
+audit_logger = get_audit_logger()
 logger = logging.getLogger("eunice.api")
 
 # Start background daemon on startup
@@ -138,6 +140,13 @@ def _require_permission(user_id: str, permission: str):
     """Raise HTTPException 403 if the user lacks the required permission."""
     perms = get_user_permissions(memory.sqlite, user_id)
     if not has_permission(perms, permission):
+        org_id = memory.sqlite.get_user_org(user_id) or "default"
+        audit_logger.log_permission_denied(
+            user_id=user_id,
+            permission=permission,
+            resource="api",
+            org_id=org_id,
+        )
         raise HTTPException(
             status_code=403,
             detail=f"Access denied: missing permission '{permission}'"
@@ -1397,6 +1406,29 @@ async def delete_fact(key: str, request: Request, token: str = Depends(verify_to
     _require_permission(user_id, "memory:write")
     deleted = memory.sqlite.delete_fact(key, user_id=user_id)
     return {"deleted": deleted}
+
+
+@app.get("/audit")
+async def read_audit(
+    request: Request,
+    event_type: str = None,
+    user_id: str = None,
+    since: str = None,
+    limit: int = 100,
+    offset: int = 0,
+    token: str = Depends(verify_token)
+):
+    """Read audit log entries. Requires audit:read permission (admin or auditor role)."""
+    caller_id = await _resolve_user_id(request)
+    _require_permission(caller_id, "audit:read")
+    entries = audit_logger.read(
+        event_type=event_type,
+        user_id=user_id,
+        since=since,
+        limit=limit,
+        offset=offset,
+    )
+    return {"entries": entries, "count": len(entries), "limit": limit, "offset": offset}
 
 
 # --- Background Fact Extraction (GATED) ---
