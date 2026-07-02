@@ -32,6 +32,7 @@ show_help() {
     echo "  help     Show this help message"
     echo ""
     echo "Typical workflow:"
+    echo "  cp .env.example .env   # edit secrets"
     echo "  ./eunice.sh launch"
     echo ""
     echo "Then open: http://\$(hostname -I | awk '{print \$1}'):8000"
@@ -75,17 +76,7 @@ cmd_setup() {
     python3 -m venv venv
     source venv/bin/activate
 
-    pip install --quiet \
-        fastapi uvicorn httpx aiofiles \
-        chromadb sentence-transformers \
-        pydantic pydantic-settings \
-        sqlalchemy alembic \
-        rich typer \
-        pytest pytest-asyncio \
-        bcrypt pyjwt \
-        pymupdf \
-        ddgs beautifulsoup4 \
-        python-multipart
+    pip install --quiet -r requirements.txt
 
     echo ""
     echo "[5/5] Creating directories..."
@@ -105,6 +96,11 @@ cmd_launch() {
     fi
 
     source venv/bin/activate
+
+    if [ -z "${EUNICE_MASTER_KEY:-}" ]; then
+        echo "WARNING: EUNICE_MASTER_KEY is not set. Encryption at rest is DISABLED."
+        echo "Set it in .env or export it before launch for enterprise encryption."
+    fi
 
     STARTED_OLLAMA=false
     if ! curl -s http://localhost:11434 > /dev/null 2>&1; then
@@ -166,7 +162,7 @@ cmd_test() {
     source venv/bin/activate
 
     echo "Running pytest..."
-    python3 -m pytest tests/test_memory.py -v
+    python3 -m pytest tests/ -v
     echo ""
 
     if ! curl -s $BASE/health > /dev/null 2>&1; then
@@ -237,7 +233,7 @@ cmd_test() {
 
     echo ""
     echo "=== 9. DAEMON STATUS ==="
-    curl -s -H "Authorization: Bearer $API_KEY" $BASE/daemon/status | python3 -m json.tool
+    curl -s -H "Authorization: Bearer $API_KEY" -H "X-EUNICE-Device-ID: test-device" $BASE/daemon/status | python3 -m json.tool
 
     echo ""
     echo "=== 10. USER ISOLATION ==="

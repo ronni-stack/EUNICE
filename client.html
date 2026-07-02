@@ -1259,7 +1259,7 @@ document.querySelectorAll('.capability-card').forEach(card => {
     if (!file) return;
     docInput.value = '';
     try {
-      await uploadFile(file, '/docs/upload', { filename: file.name });
+      await uploadFile(file, '/documents/upload', { filename: file.name });
       showToast('Document indexed for RAG', 'success');
       input.value = `I uploaded ${file.name}. Ask me questions about it.`;
     } catch (e) { showToast(e.message, 'error'); }
@@ -1309,7 +1309,7 @@ document.querySelectorAll('.capability-card').forEach(card => {
     const list = document.getElementById('doc-list');
     list.innerHTML = '<div class="empty-state">Loading documents...</div>';
     try {
-      const resp = await fetch(`${API_BASE}/docs`, { headers: getHeaders('') });
+      const resp = await fetch(`${API_BASE}/documents`, { headers: getHeaders('') });
       const data = await resp.json();
       renderDocList(list, data.documents || []);
     } catch (e) { list.innerHTML = '<div class="empty-state">Failed to load documents</div>'; }
@@ -1377,7 +1377,7 @@ ${data.content.slice(0, 2000)}${data.content.length > 2000 ? '[truncated]' : ''}
     showToast('File uploaded', 'success');
     loadFiles();
   });
-  setupDrop('doc-drop', '/docs/upload', async (data, file) => {
+  setupDrop('doc-drop', '/documents/upload', async (data, file) => {
     showToast('Document indexed for RAG', 'success');
     loadDocs();
   });
@@ -1393,7 +1393,7 @@ ${data.content.slice(0, 2000)}${data.content.length > 2000 ? '[truncated]' : ''}
       const file = e.dataTransfer.files[0];
       if (!file) return;
       try {
-        const extra = endpoint === '/docs/upload' ? { filename: file.name } : {};
+        const extra = endpoint === '/documents/upload' ? { filename: file.name } : {};
         const data = await uploadFile(file, endpoint, extra);
         onSuccess(data, file);
       } catch (err) { showToast(err.message, 'error'); }

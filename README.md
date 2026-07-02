@@ -2,24 +2,27 @@
 
 > Your local, private AI with persistent memory, risk-tiered tools, and autonomous user profiling.
 
+**This branch (`eunice-enterprise`) adds multi-tenancy, RBAC, audit logging, OIDC SSO, encryption at rest, rate limiting, and admin dashboard features on top of the base personal assistant.** The base version lives on the `main` branch.
+
 EUNICE is a locally-hosted AI assistant that runs entirely on your hardware. It remembers your context across conversations, learns your preferences over time, and can research, code, manage files, and ingest documents — without sending your data to the cloud.
 
 ---
 
 ## Quick Start
 
-### One-line install
+### One-line install (Enterprise branch)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ronni-stack/EUNICE/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ronni-stack/EUNICE/eunice-enterprise/install.sh | bash
 ```
 
 ### Or manually
 
 ```bash
-git clone https://github.com/ronni-stack/EUNICE.git ~/EUNICE_MASTER
+git clone --branch eunice-enterprise https://github.com/ronni-stack/EUNICE.git ~/EUNICE_MASTER
 cd ~/EUNICE_MASTER
-pip install -r requirements.txt
+# Edit .env with real secrets, then:
+./eunice.sh setup   # or: pip install -r requirements.txt
 ./eunice.sh launch
 ```
 
@@ -77,7 +80,7 @@ Tracks four dimensions per identity:
 Upload PDF, TXT, or MD files. EUNICE chunks, embeds, and retrieves relevant excerpts during chat.
 
 ```bash
-curl -X POST "http://localhost:8000/docs/upload?filename=report.pdf" \
+curl -X POST "http://localhost:8000/documents/upload?filename=report.pdf" \
   -H "Authorization: Bearer $API_KEY" \
   -H "X-EUNICE-Device-ID: my-device" \
   --data-binary @report.pdf
@@ -118,6 +121,18 @@ Sandboxed read/write/append/list/delete in `data/files/{identity_id}/`.
 | **Medium** | `add_event`, `self_update` | Execute + log |
 | **High** | `run_code`, `get_balance` | Requires confirmation |
 | **Critical** | `transfer_funds`, `delete_file` | Always deny until biometric flow |
+
+### Enterprise Features (this branch)
+- **Multi-tenancy** — organizations, departments, and org-scoped data.
+- **RBAC** — roles with wildcard permissions enforced across tools, memory, and API endpoints.
+- **Audit logging** — immutable JSON Lines log of tool calls, memory access, permission denials, and reasoning steps.
+- **OIDC SSO** — link corporate identity providers (Azure AD, Google, etc.) and map claims to roles.
+- **Encryption at rest** — AES-256-GCM field encryption for SQLite and ChromaDB when `EUNICE_MASTER_KEY` is set.
+- **Security hardening** — input sanitization, prompt-injection detection, per-user/org rate limiting, configurable CORS/CSP.
+- **Admin dashboard** — `/admin/*` endpoints for org/department/user management, tool approvals, model status, crypto/secrets audit.
+- **Deployment packaging** — `Dockerfile`, `docker-compose.yml`, VM image builder, and air-gapped install script.
+
+See `docs/ENTERPRISE.md` and `docs/ADMIN_SETUP.md` for details.
 
 ### Intent Routing (v0.9.1)
 Structured intent classification replaces blunt keyword matching. EUNICE now understands:
@@ -161,7 +176,14 @@ EUNICE/
 │   ├── identity.py     # Identity & device management
 │   ├── inference.py    # Ollama streaming wrapper
 │   ├── personality.py  # Prompt management
-│   ├── tool_router.py  # Risk-tiered tool execution
+│   ├── rbac.py         # Roles and wildcard permissions
+│   ├── audit.py        # Append-only audit logger
+│   ├── oidc.py         # OIDC provider and callback handling
+│   ├── crypto.py       # AES-256-GCM field encryption
+│   ├── rate_limit.py   # Sliding-window rate limiter
+│   ├── sanitization.py # Input sanitization helpers
+│   ├── secrets_audit.py# Non-sensitive secrets audit
+│   ├── tool_router.py  # Risk-tiered tool execution + approval checks
 │   ├── onboarding.py   # Progressive profiling engine
 │   ├── fact_extractor.py # Implicit fact extraction
 │   ├── tone.py         # Dynamic tone adaptation
@@ -187,10 +209,11 @@ EUNICE/
 
 ```
 data/
-├── eunice_memory.db    # SQLite: users, messages, sessions, facts, identities
+├── eunice_memory.db    # SQLite: users, messages, sessions, facts, identities, orgs, audit events
 ├── chroma/             # ChromaDB vector memory
 ├── files/              # Per-user file workspaces
 ├── notes/              # Per-user notes
+├── audit.log           # Immutable security audit log
 └── eunice.log          # Runtime logs
 ```
 

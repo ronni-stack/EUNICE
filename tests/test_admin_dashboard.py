@@ -93,19 +93,20 @@ def test_admin_users_crud(client, admin_headers):
 def test_tool_approval_toggle(client, admin_headers):
     import api.server
     mm = api.server.memory
-    mm.sqlite.create_organization("tools-org", "Tools Org")
+    org_id = _unique("tools-org")
+    mm.sqlite.create_organization(org_id, "Tools Org")
 
-    r = client.get("/admin/tools/approvals?org_id=tools-org", headers=admin_headers)
+    r = client.get(f"/admin/tools/approvals?org_id={org_id}", headers=admin_headers)
     assert r.status_code == 200
     notes = next(t for t in r.json()["tools"] if t["tool_name"] == "notes")
     assert notes["approved"] is True
 
     r = client.post("/admin/tools/approvals", headers=admin_headers, json={
-        "org_id": "tools-org", "tool_name": "notes", "approved": False
+        "org_id": org_id, "tool_name": "notes", "approved": False
     })
     assert r.status_code == 200
 
-    r = client.get("/admin/tools/approvals?org_id=tools-org", headers=admin_headers)
+    r = client.get(f"/admin/tools/approvals?org_id={org_id}", headers=admin_headers)
     notes = next(t for t in r.json()["tools"] if t["tool_name"] == "notes")
     assert notes["approved"] is False
 
@@ -114,13 +115,15 @@ def test_tool_approval_toggle(client, admin_headers):
 async def test_tool_approval_enforced_in_router(client, admin_headers):
     import api.server
     mm = api.server.memory
-    mm.sqlite.create_organization("block-org", "Block Org")
-    mm.sqlite.create_department("dept", "block-org", "Dept")
-    mm.sqlite.ensure_user("blocked-user", org_id="block-org", department_id="dept", role_id="user")
-    mm.sqlite.set_tool_approval("block-org", "notes", False)
+    org_id = _unique("block-org")
+    mm.sqlite.create_organization(org_id, "Block Org")
+    mm.sqlite.create_department("dept", org_id, "Dept")
+    user_id = _unique("blocked-user")
+    mm.sqlite.ensure_user(user_id, org_id=org_id, department_id="dept", role_id="user")
+    mm.sqlite.set_tool_approval(org_id, "notes", False)
 
     router = api.server.tools
-    result = await router.execute("notes", {"user_id": "blocked-user", "action": "read"})
+    result = await router.execute("notes", {"user_id": user_id, "action": "read"})
     assert "DENIED" in result
     assert "not approved" in result
 
@@ -137,12 +140,13 @@ def test_models_status_endpoint(client, admin_headers):
 def test_audit_org_filter(client, admin_headers):
     import api.server
     mm = api.server.memory
-    mm.sqlite.create_organization("audit-org", "Audit Org")
+    org_id = _unique("audit-org")
+    mm.sqlite.create_organization(org_id, "Audit Org")
     audit = api.server.audit_logger
-    audit.log_memory_access("read", "u1", "audit-org", "resource")
+    audit.log_memory_access("read", "u1", org_id, "resource")
     audit.log_memory_access("read", "u2", "default", "resource")
 
-    r = client.get("/audit?org_id=audit-org", headers=admin_headers)
+    r = client.get(f"/audit?org_id={org_id}", headers=admin_headers)
     assert r.status_code == 200
     entries = r.json()["entries"]
-    assert all(e.get("org_id") == "audit-org" for e in entries)
+    assert all(e.get("org_id") == org_id for e in entries)
