@@ -19,6 +19,7 @@ class MemoryManager:
     def __init__(self):
         self.sqlite = SQLiteStore()
         self.vector = VectorStore()
+        self.vector.set_key_resolver(self.sqlite.get_org_encryption_key)
         self.validator = FactValidator()
         self._turn_counter = {}
         self.audit = get_audit_logger()

@@ -18,3 +18,5 @@ pymupdf
 duckduckgo-search
 beautifulsoup4
 python-multipart
+cryptography==49.0.0
+pip-audit

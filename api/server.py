@@ -16,7 +16,10 @@ from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Depends, File, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from config import BASE_DIR, DATA_DIR, VERSION, MODEL_NAME, MEMORY_LIMIT, OLLAMA_URL, OLLAMA_TIMEOUT
+from config import (
+    BASE_DIR, DATA_DIR, VERSION, MODEL_NAME, MEMORY_LIMIT,
+    OLLAMA_URL, OLLAMA_TIMEOUT, MASTER_KEY, ALLOWED_ORIGINS, CSP_HEADER
+)
 from core.auth import verify_token, get_current_user, get_auth_context, AuthContext
 from core.rbac import has_permission, get_user_permissions
 from core.audit import get_audit_logger
@@ -32,17 +35,23 @@ from core.tone import format_tone_instruction
 from core.ingestion import IngestionPipeline
 from core.research import ResearchAssistant
 from core.agent import ReActAgent
+from core.sanitization import sanitize_text, sanitize_filename, is_prompt_injection_attempt
+from core.rate_limit import RateLimiter
+from core.secrets_audit import audit_secrets
 from memory.manager import MemoryManager
 from memory.trail_manager import TrailManager
 from core.intent import IntentClassifier
 
 app = FastAPI(title=f"EUNICE v{VERSION}")
+rate_limiter = RateLimiter()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-EUNICE-Device-ID", "X-EUNICE-User-ID"],
+    allow_credentials=True,
+    max_age=600,
 )
 
 @app.middleware("http")
@@ -61,6 +70,19 @@ async def log_requests(request: Request, call_next):
         elapsed = (asyncio.get_event_loop().time() - start) * 1000
         logger.exception(f"[RESPONSE ERROR] {method} {path} time={elapsed:.1f}ms error={e}")
         raise
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Add baseline security headers to every response (Week 7)."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if "text/html" in response.headers.get("content-type", ""):
+        response.headers["Content-Security-Policy"] = CSP_HEADER
+    return response
+
 
 memory = MemoryManager()
 tools = ToolRouter()
@@ -153,6 +175,31 @@ def _require_permission(user_id: str, permission: str):
             status_code=403,
             detail=f"Access denied: missing permission '{permission}'"
         )
+
+
+# --- Rate limiting (Week 7) ---
+async def check_rate_limit(request: Request):
+    """Enforce per-user and per-org rate limits. Public endpoints are exempt."""
+    if request.method == "OPTIONS":
+        return
+    path = request.url.path
+    if path in {"/health", "/ready", "/metrics", "/docs", "/openapi.json"}:
+        return
+    user_id = await _resolve_user_id(request)
+    org_id = memory.sqlite.get_user_org(user_id) or "default"
+    allowed, scope = rate_limiter.check(user_id, org_id)
+    if not allowed:
+        audit_logger.log_permission_denied(
+            user_id=user_id,
+            permission="rate_limit",
+            resource="api",
+            org_id=org_id,
+            details={"scope": scope},
+        )
+        raise HTTPException(status_code=429, detail=f"Rate limit exceeded ({scope})")
+
+
+app.dependencies = [Depends(check_rate_limit)]
 
 
 # --- Dynamic Denial Prompt ---
@@ -620,12 +667,15 @@ async def _handle_onboarding(user_id: str, user_msg: str, session: str) -> str:
 @app.post("/chat")
 async def chat(request: Request, background_tasks: BackgroundTasks, token: str = Depends(verify_token)):
     body = await request.json()
-    user_msg = body.get("message", "").strip()
-    session = body.get("session", "default").strip()
+    user_msg = sanitize_text(body.get("message", "").strip())
+    session = sanitize_text(body.get("session", "default").strip(), max_length=128)
     user_id = await _resolve_user_id(request, body)
 
     if not user_msg:
         return {"reply": "[No message received]"}
+
+    if is_prompt_injection_attempt(user_msg):
+        return {"reply": "[Input rejected: potential prompt injection attempt detected]"}
 
     # Ensure user exists and has baseline permissions
     memory.ensure_user(user_id)
@@ -833,11 +883,11 @@ async def chat(request: Request, background_tasks: BackgroundTasks, token: str =
 @app.post("/chat/stream")
 async def chat_stream(request: Request, background_tasks: BackgroundTasks, token: str = Depends(verify_token)):
     body = await request.json()
-    user_msg = body.get("message", "").strip()
-    session = body.get("session", "default").strip()
+    user_msg = sanitize_text(body.get("message", "").strip())
+    session = sanitize_text(body.get("session", "default").strip(), max_length=128)
     user_id = await _resolve_user_id(request, body)
-    trail_id = None  # ← ADD THIS
-    user_msg_lower = user_msg.lower()  # ← ADD THIS
+    trail_id = None
+    user_msg_lower = user_msg.lower()
 
     logger.info(f"[CHAT] user={user_id} session={session} msg={user_msg!r}")
 
@@ -845,6 +895,12 @@ async def chat_stream(request: Request, background_tasks: BackgroundTasks, token
         logger.warning("[CHAT] Empty message received")
         return StreamingResponse(
             iter([f'data: {json.dumps({"error": "No message received"})}\n\n']),
+            media_type="text/event-stream"
+        )
+
+    if is_prompt_injection_attempt(user_msg):
+        return StreamingResponse(
+            iter([f'data: {json.dumps({"error": "Input rejected: potential prompt injection attempt detected"})}\n\n']),
             media_type="text/event-stream"
         )
 
@@ -1210,6 +1266,47 @@ async def clear_alert(trail_id: str, request: Request, token: str = Depends(veri
     daemon.clear_alert(trail_id)
     return {"cleared": True}
 
+
+# --- Encryption at rest (Week 6 Enterprise) ---
+@app.get("/admin/crypto/status")
+async def admin_crypto_status(request: Request, token: str = Depends(verify_token)):
+    """Report whether encryption at rest is enabled and which orgs have salts."""
+    user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "admin:*")
+    from config import MASTER_KEY as _MASTER_KEY
+    enabled = bool(_MASTER_KEY)
+    orgs = []
+    for org in memory.sqlite.list_organizations():
+        org_id = org["id"]
+        has_salt = memory.sqlite.has_org_crypto_salt(org_id)
+        orgs.append({
+            "org_id": org_id,
+            "salt_present": has_salt,
+            "encrypted": enabled and has_salt,
+        })
+    return {
+        "encryption_enabled": enabled,
+        "master_key_configured": enabled,
+        "organizations": orgs,
+    }
+
+
+@app.post("/admin/crypto/rotate")
+async def admin_crypto_rotate(request: Request, token: str = Depends(verify_token)):
+    """Placeholder for future key rotation workflow."""
+    user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "admin:*")
+    return {"status": "not_implemented", "detail": "Key rotation is planned for a future release"}
+
+
+@app.get("/admin/secrets/audit")
+async def admin_secrets_audit(request: Request, token: str = Depends(verify_token)):
+    """Non-sensitive audit of critical secrets/configuration (admin only)."""
+    user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "admin:*")
+    return audit_secrets()
+
+
 @app.get("/trails")
 async def list_trails(request: Request, token: str = Depends(verify_token)):
     user_id = await _resolve_user_id(request)
@@ -1270,7 +1367,7 @@ async def upload_document(
     """Upload a PDF, TXT, or MD document for RAG retrieval. Accepts multipart form."""
     user_id = await _resolve_user_id(request)
     _require_permission(user_id, "documents:write")
-    upload_name = filename or file.filename or "upload"
+    upload_name = sanitize_filename(filename or file.filename or "upload")
     body = await file.read()
 
     if not body:
@@ -1307,7 +1404,7 @@ async def research_endpoint(request: Request, token: str = Depends(verify_token)
     user_id = await _resolve_user_id(request)
     _require_permission(user_id, "research:run")
     body = await request.json()
-    query = body.get("query", "").strip()
+    query = sanitize_text(body.get("query", "").strip(), max_length=500)
     max_results = min(int(body.get("max_results", 5)), 10)
     fetch_full = bool(body.get("fetch_full", True))
 
@@ -1378,7 +1475,7 @@ async def upload_file(request: Request, file: UploadFile = File(...), path: str 
         fm = FileManager(user_id)
         target_dir = fm._resolve_path(path) if path else fm.workspace
         target_dir.mkdir(parents=True, exist_ok=True)
-        target = target_dir / (file.filename or "upload")
+        target = target_dir / sanitize_filename(file.filename or "upload")
         data = await file.read()
         target.write_bytes(data)
         rel_path = str(target.relative_to(fm.workspace))
@@ -1408,10 +1505,10 @@ async def coder_endpoint(request: Request, token: str = Depends(verify_token)):
     user_id = await _resolve_user_id(request)
     _require_permission(user_id, "tool:coder")
     body = await request.json()
-    action = body.get("action", "generate")
-    req_text = body.get("request", "")
-    filename = body.get("filename", "")
-    language = body.get("language", "python")
+    action = sanitize_text(body.get("action", "generate"), max_length=20)
+    req_text = sanitize_text(body.get("request", ""), max_length=4000)
+    filename = sanitize_filename(body.get("filename", ""), default="")
+    language = sanitize_text(body.get("language", "python"), max_length=20)
     timeout = int(body.get("timeout", 10))
 
     try:
@@ -1452,6 +1549,48 @@ async def health():
         "daemon": daemon_stat,
         "tools_available": [t["name"] for t in tools.get_available_tools()]
     }
+
+
+@app.get("/ready")
+async def ready():
+    """Readiness probe: verify core dependencies are reachable."""
+    checks = {}
+    try:
+        memory.sqlite.list_organizations()
+        checks["sqlite"] = "ok"
+    except Exception as e:
+        checks["sqlite"] = f"error: {e}"
+
+    vector_stats = memory.vector.get_stats()
+    checks["vector"] = "ok" if vector_stats.get("status") == "active" else "disabled"
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{OLLAMA_URL}/api/tags")
+        checks["ollama"] = "ok" if r.status_code < 500 else f"status_{r.status_code}"
+    except Exception as e:
+        checks["ollama"] = f"unreachable: {type(e).__name__}"
+
+    checks["daemon"] = "running" if daemon.running else "stopped"
+    is_ready = all(v in ("ok", "running") for v in checks.values())
+    return {"ready": is_ready, "checks": checks}
+
+
+@app.get("/metrics")
+async def metrics(request: Request, token: str = Depends(verify_token)):
+    """Operational metrics (admin only)."""
+    user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "admin:*")
+    return {
+        "messages": memory.sqlite.count_rows("messages"),
+        "facts": memory.sqlite.count_rows("facts"),
+        "documents_indexed": memory.sqlite.count_rows("documents"),
+        "users": memory.sqlite.count_rows("users"),
+        "organizations": memory.sqlite.count_rows("organizations"),
+        "vector": memory.vector.get_stats(),
+        "daemon": daemon.get_daemon_status(),
+    }
+
 
 @app.get("/sessions")
 async def list_sessions(request: Request, token: str = Depends(verify_token)):

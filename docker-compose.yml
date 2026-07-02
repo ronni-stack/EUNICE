@@ -1,0 +1,26 @@
+# EUNICE Enterprise — Docker Compose (Week 8)
+version: "3.8"
+
+services:
+  eunice:
+    build: .
+    image: eunice-enterprise:latest
+    container_name: eunice-enterprise
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - EUNICE_OLLAMA_URL=${EUNICE_OLLAMA_URL:-http://host.docker.internal:11434}
+    volumes:
+      - eunice-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  eunice-data:

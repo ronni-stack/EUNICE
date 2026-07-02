@@ -4,11 +4,14 @@
 # See LICENSE for details.
 
 """EUNICE v0.9 — SQLite Episodic Memory (multi-user + identity)"""
+import base64
+import os
 import sqlite3
 import json
 from datetime import datetime, timezone
 from typing import Optional
 from config import DB_PATH
+from core.crypto import derive_org_key, encrypt_optional, decrypt_optional
 
 DEFAULT_USER_ID = "ronny"
 
@@ -34,6 +37,16 @@ class SQLiteStore:
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Org-level encryption salt (Week 6 Enterprise)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS org_crypto (
+                    org_id TEXT PRIMARY KEY,
+                    salt TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
                 )
             """)
 
@@ -639,10 +652,11 @@ class SQLiteStore:
             c = conn.cursor()
             if org_id is None:
                 org_id = self._resolve_org_id(conn, user_id)
+            key = self.get_org_encryption_key(org_id, conn=conn)
             c.execute("""
                 INSERT INTO documents (doc_hash, user_id, org_id, filename, content_type, chunk_count)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (doc_hash, user_id, org_id, filename, content_type, chunk_count))
+            """, (doc_hash, user_id, org_id, encrypt_optional(filename, key), content_type, chunk_count))
             conn.commit()
 
     def list_documents(self, user_id: str, org_id: str = None) -> list:
@@ -650,11 +664,15 @@ class SQLiteStore:
             c = conn.cursor()
             if org_id is None:
                 org_id = self._resolve_org_id(conn, user_id)
+            key = self.get_org_encryption_key(org_id, conn=conn)
             c.execute(
                 "SELECT doc_hash, filename, content_type, chunk_count, created_at FROM documents WHERE user_id = ? AND org_id = ? ORDER BY created_at DESC",
                 (user_id, org_id)
             )
-            return [self._row_to_dict(c, r) for r in c.fetchall()]
+            rows = [self._row_to_dict(c, r) for r in c.fetchall()]
+            for row in rows:
+                row["filename"] = decrypt_optional(row["filename"], key)
+            return rows
 
     # --- Users ---
     def ensure_user(self, user_id: str, name: str = None, org_id: str = "default",
@@ -738,6 +756,60 @@ class SQLiteStore:
                 except json.JSONDecodeError:
                     return []
             return []
+
+    # --- Org encryption (Week 6 Enterprise) ---
+    def get_org_crypto_salt(self, org_id: str, conn: sqlite3.Connection = None) -> bytes:
+        """Return or create a per-org encryption salt.
+
+        If a connection is supplied, it is reused so this can be called safely
+        inside an existing transaction without causing database-lock errors.
+        """
+        close_after = conn is None
+        if conn is None:
+            conn = sqlite3.connect(self.db_path)
+        try:
+            c = conn.cursor()
+            c.execute("SELECT salt FROM org_crypto WHERE org_id = ?", (org_id,))
+            row = c.fetchone()
+            if row and row[0]:
+                return base64.b64decode(row[0])
+            salt = os.urandom(16)
+            c.execute("INSERT INTO org_crypto (org_id, salt) VALUES (?, ?)",
+                      (org_id, base64.b64encode(salt).decode("ascii")))
+            conn.commit()
+            return salt
+        finally:
+            if close_after:
+                conn.close()
+
+    def get_org_encryption_key(self, org_id: str, conn: sqlite3.Connection = None) -> Optional[bytes]:
+        """Derive the org encryption key if a master key is configured."""
+        from config import MASTER_KEY
+        if not MASTER_KEY:
+            return None
+        salt = self.get_org_crypto_salt(org_id, conn=conn)
+        return derive_org_key(MASTER_KEY, org_id, salt)
+
+    def has_org_crypto_salt(self, org_id: str) -> bool:
+        """Return True if a salt has already been generated for this org."""
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("SELECT 1 FROM org_crypto WHERE org_id = ?", (org_id,))
+            return c.fetchone() is not None
+
+    def list_organizations(self) -> list:
+        """Return all registered organizations."""
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("SELECT id, name FROM organizations ORDER BY id")
+            return [self._row_to_dict(c, r) for r in c.fetchall()]
+
+    def count_rows(self, table: str) -> int:
+        """Return the number of rows in a table."""
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute(f"SELECT COUNT(*) FROM {table}")
+            return c.fetchone()[0]
 
     def assign_user_role(self, user_id: str, org_id: str = None, department_id: str = None, role_id: str = None):
         with sqlite3.connect(self.db_path) as conn:
@@ -894,9 +966,11 @@ class SQLiteStore:
                     (session, user_id)
                 )
 
+            key = self.get_org_encryption_key(org_id, conn=conn)
+            enc_content = encrypt_optional(content, key)
             c.execute(
                 "INSERT INTO messages (user_id, org_id, session, role, content) VALUES (?, ?, ?, ?, ?)",
-                (user_id, org_id, session, role, content)
+                (user_id, org_id, session, role, enc_content)
             )
             conn.commit()
 
@@ -912,18 +986,20 @@ class SQLiteStore:
             c = conn.cursor()
             if org_id is None:
                 org_id = self._resolve_org_id(conn, user_id)
+            key = self.get_org_encryption_key(org_id, conn=conn)
             c.execute(
                 "SELECT role, content FROM messages WHERE user_id = ? AND org_id = ? AND session = ? ORDER BY id DESC LIMIT ?",
                 (user_id, org_id, session, limit)
             )
             rows = c.fetchall()
-            return [{"role": r[0], "content": r[1]} for r in reversed(rows)]
+            return [{"role": r[0], "content": decrypt_optional(r[1], key)} for r in reversed(rows)]
 
     def get_session_history(self, session: str, user_id: str = DEFAULT_USER_ID, org_id: str = None) -> dict:
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
             if org_id is None:
                 org_id = self._resolve_org_id(conn, user_id)
+            key = self.get_org_encryption_key(org_id, conn=conn)
             c.execute(
                 "SELECT role, content, timestamp FROM messages WHERE user_id = ? AND org_id = ? AND session = ? ORDER BY id ASC",
                 (user_id, org_id, session)
@@ -934,7 +1010,7 @@ class SQLiteStore:
             return {
                 "session": session,
                 "title": title_row[0] if title_row else session,
-                "messages": [{"role": r[0], "content": r[1], "timestamp": r[2]} for r in rows]
+                "messages": [{"role": r[0], "content": decrypt_optional(r[1], key), "timestamp": r[2]} for r in rows]
             }
 
     def get_all_sessions(self, user_id: str = DEFAULT_USER_ID) -> list:
@@ -971,9 +1047,11 @@ class SQLiteStore:
             c = conn.cursor()
             if org_id is None:
                 org_id = self._resolve_org_id(conn, user_id)
+            key = self.get_org_encryption_key(org_id, conn=conn)
+            enc_goal = encrypt_optional(goal, key)
             c.execute(
                 "INSERT INTO reasoning_runs (id, user_id, org_id, session, trail_id, goal) VALUES (?, ?, ?, ?, ?, ?)",
-                (run_id, user_id, org_id, session, trail_id, goal)
+                (run_id, user_id, org_id, session, trail_id, enc_goal)
             )
             conn.commit()
 
@@ -981,11 +1059,16 @@ class SQLiteStore:
                             action_input: dict, observation: str):
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
+            c.execute("SELECT org_id FROM reasoning_runs WHERE id = ?", (run_id,))
+            row = c.fetchone()
+            org_id = row[0] if row and row[0] else "default"
+            key = self.get_org_encryption_key(org_id, conn=conn)
             c.execute(
                 """INSERT INTO reasoning_steps
                    (run_id, step_index, thought, action, action_input, observation)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (run_id, step_index, thought, action, json.dumps(action_input), observation)
+                (run_id, step_index, encrypt_optional(thought, key), action, json.dumps(action_input),
+                 encrypt_optional(observation, key))
             )
             conn.commit()
 
@@ -1007,6 +1090,9 @@ class SQLiteStore:
                 return None
             cols = [d[0] for d in c.description]
             run = dict(zip(cols, row))
+            org_id = run.get("org_id") or "default"
+            key = self.get_org_encryption_key(org_id, conn=conn)
+            run["goal"] = decrypt_optional(run.get("goal"), key)
             c.execute("SELECT * FROM reasoning_steps WHERE run_id = ? ORDER BY step_index", (run_id,))
             step_cols = [d[0] for d in c.description]
             run["steps"] = []
@@ -1016,6 +1102,8 @@ class SQLiteStore:
                     step["action_input"] = json.loads(step["action_input"])
                 except Exception:
                     pass
+                step["thought"] = decrypt_optional(step.get("thought"), key)
+                step["observation"] = decrypt_optional(step.get("observation"), key)
                 run["steps"].append(step)
             return run
 
@@ -1026,6 +1114,7 @@ class SQLiteStore:
             c = conn.cursor()
             if org_id is None:
                 org_id = self._resolve_org_id(conn, user_id)
+            enc_key = self.get_org_encryption_key(org_id, conn=conn)
             c.execute("""
                 INSERT INTO facts (user_id, org_id, key, value, category, confidence, source, reinforcement_count)
                 VALUES (?, ?, ?, ?, ?, ?, ?, 1)
@@ -1035,7 +1124,7 @@ class SQLiteStore:
                     source=excluded.source,
                     reinforcement_count=facts.reinforcement_count + 1,
                     timestamp=datetime('now')
-            """, (user_id, org_id, key, value, category, confidence, source))
+            """, (user_id, org_id, key, encrypt_optional(value, enc_key), category, confidence, source))
             conn.commit()
 
     def get_facts(self, category: str = None, user_id: str = DEFAULT_USER_ID, org_id: str = None) -> dict:
@@ -1043,6 +1132,7 @@ class SQLiteStore:
             c = conn.cursor()
             if org_id is None:
                 org_id = self._resolve_org_id(conn, user_id)
+            key = self.get_org_encryption_key(org_id, conn=conn)
             if category:
                 c.execute(
                     "SELECT key, value FROM facts WHERE user_id = ? AND org_id = ? AND category = ? ORDER BY timestamp DESC",
@@ -1054,18 +1144,22 @@ class SQLiteStore:
                     (user_id, org_id)
                 )
             rows = c.fetchall()
-            return {r[0]: r[1] for r in rows}
+            return {r[0]: decrypt_optional(r[1], key) for r in rows}
 
     def get_facts_with_meta(self, user_id: str = DEFAULT_USER_ID, org_id: str = None) -> list:
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
             if org_id is None:
                 org_id = self._resolve_org_id(conn, user_id)
+            key = self.get_org_encryption_key(org_id, conn=conn)
             c.execute(
                 "SELECT key, value, category, confidence, source, reinforcement_count FROM facts WHERE user_id = ? AND org_id = ? ORDER BY timestamp DESC",
                 (user_id, org_id)
             )
-            return [self._row_to_dict(c, r) for r in c.fetchall()]
+            rows = [self._row_to_dict(c, r) for r in c.fetchall()]
+            for row in rows:
+                row["value"] = decrypt_optional(row["value"], key)
+            return rows
 
     def delete_fact(self, key: str, user_id: str = DEFAULT_USER_ID, org_id: str = None) -> bool:
         with sqlite3.connect(self.db_path) as conn:

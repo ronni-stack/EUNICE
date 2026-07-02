@@ -9,8 +9,10 @@ Fixes: Embedding model download failures, silent crashes, empty collections, use
 import chromadb
 import warnings
 import os
+from typing import Optional
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 from config import CHROMA_PATH, EMBEDDING_MODEL
+from core.crypto import encrypt_optional, decrypt_optional
 
 DEFAULT_USER_ID = "ronny"
 
@@ -23,7 +25,20 @@ class VectorStore:
         self.embed_fn = None
         self.conversations = None
         self.documents = None
+        self._key_resolver = None
         self._init_embeddings()
+
+    def set_key_resolver(self, resolver):
+        """Inject a callback(org_id) -> Optional[bytes] for per-org encryption keys."""
+        self._key_resolver = resolver
+
+    def _get_org_key(self, org_id: str) -> Optional[bytes]:
+        if self._key_resolver is None:
+            return None
+        try:
+            return self._key_resolver(org_id)
+        except Exception:
+            return None
 
     def _init_embeddings(self):
         """Initialize embedding function with fallback handling."""
@@ -77,8 +92,11 @@ class VectorStore:
             metadata = metadata or {}
             if "user_id" not in metadata:
                 metadata["user_id"] = DEFAULT_USER_ID
+            org_id = metadata.get("org_id", "default")
+            key = self._get_org_key(org_id)
+            stored_text = encrypt_optional(text, key)
             self.documents.add(
-                documents=[text],
+                documents=[stored_text],
                 metadatas=[metadata],
                 ids=[doc_id]
             )
@@ -121,7 +139,8 @@ class VectorStore:
             )
             docs = results["documents"][0] if results["documents"] else []
             metas = results["metadatas"][0] if results["metadatas"] else []
-            return [{"content": d, "meta": m} for d, m in zip(docs, metas)]
+            key = self._get_org_key(org_id)
+            return [{"content": decrypt_optional(d, key), "meta": m} for d, m in zip(docs, metas)]
         except Exception as e:
             print(f"[VECTOR] ⚠ Document search failed: {e}")
             return []

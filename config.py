@@ -85,6 +85,22 @@ MODEL_POLICY = {
 # Auth
 API_KEY = os.getenv("EUNICE_API_KEY", "eunice-local-dev-key-2026")
 
+# Encryption at rest (Week 6 Enterprise)
+# If set, sensitive SQLite and ChromaDB content is encrypted per-org.
+# If unset, data remains plaintext (backwards compatible).
+MASTER_KEY = os.getenv("EUNICE_MASTER_KEY", "")
+
+# CORS / Security headers (Week 7 Enterprise)
+# Comma-separated list of allowed origins. Defaults to wildcard for local dev.
+_ALLOWED_ORIGINS_RAW = os.getenv("EUNICE_ALLOWED_ORIGINS", "")
+ALLOWED_ORIGINS = [o.strip() for o in _ALLOWED_ORIGINS_RAW.split(",") if o.strip()] or ["*"]
+
+CSP_HEADER = os.getenv(
+    "EUNICE_CSP_HEADER",
+    "default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; object-src 'none'; frame-ancestors 'none'"
+)
+
 # JWT secret: prefer env, then persisted file, then generate once
 _JWT_SECRET_FILE = DATA_DIR / ".jwt_secret"
 if os.getenv("EUNICE_JWT_SECRET"):
