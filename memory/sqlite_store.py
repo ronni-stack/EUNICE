@@ -415,6 +415,18 @@ class SQLiteStore:
                 )
             """)
 
+            # Tool approvals per org (Week 9 Enterprise)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS tool_approvals (
+                    org_id TEXT NOT NULL,
+                    tool_name TEXT NOT NULL,
+                    approved BOOLEAN DEFAULT 1,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (org_id, tool_name),
+                    FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
+                )
+            """)
+
             # Migration: existing users rows represent both identity and device in v0.8
             c.execute("SELECT COUNT(*) FROM identities")
             if c.fetchone()[0] == 0:
@@ -738,6 +750,16 @@ class SQLiteStore:
                       (dept_id, org_id, name))
             conn.commit()
 
+    def list_departments(self, org_id: str = None) -> list:
+        """Return departments, optionally filtered by org."""
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            if org_id:
+                c.execute("SELECT * FROM departments WHERE org_id = ? ORDER BY id", (org_id,))
+            else:
+                c.execute("SELECT * FROM departments ORDER BY id")
+            return [self._row_to_dict(c, r) for r in c.fetchall()]
+
     def create_role(self, role_id: str, name: str, permissions: list):
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
@@ -804,6 +826,41 @@ class SQLiteStore:
             c.execute("SELECT id, name FROM organizations ORDER BY id")
             return [self._row_to_dict(c, r) for r in c.fetchall()]
 
+    # --- Tool approvals (Week 9 Enterprise) ---
+    def set_tool_approval(self, org_id: str, tool_name: str, approved: bool):
+        """Enable or disable a tool for an organization."""
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO tool_approvals (org_id, tool_name, approved, updated_at)
+                VALUES (?, ?, ?, datetime('now'))
+                ON CONFLICT(org_id, tool_name) DO UPDATE SET
+                    approved=excluded.approved,
+                    updated_at=excluded.updated_at
+            """, (org_id, tool_name, int(approved)))
+            conn.commit()
+
+    def get_tool_approval(self, org_id: str, tool_name: str) -> Optional[bool]:
+        """Return explicit approval status, or None if not configured (default allow)."""
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("SELECT approved FROM tool_approvals WHERE org_id = ? AND tool_name = ?",
+                      (org_id, tool_name))
+            row = c.fetchone()
+            if row:
+                return bool(row[0])
+            return None
+
+    def list_tool_approvals(self, org_id: str) -> list:
+        """Return all tool approval records for an org."""
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("""
+                SELECT tool_name, approved, updated_at FROM tool_approvals
+                WHERE org_id = ? ORDER BY tool_name
+            """, (org_id,))
+            return [self._row_to_dict(c, r) for r in c.fetchall()]
+
     def count_rows(self, table: str) -> int:
         """Return the number of rows in a table."""
         with sqlite3.connect(self.db_path) as conn:
@@ -839,6 +896,16 @@ class SQLiteStore:
             if row:
                 return self._row_to_dict(c, row)
             return None
+
+    def list_users(self, org_id: str = None) -> list:
+        """Return user records, optionally filtered by org."""
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            if org_id:
+                c.execute("SELECT * FROM users WHERE org_id = ? ORDER BY id", (org_id,))
+            else:
+                c.execute("SELECT * FROM users ORDER BY id")
+            return [self._row_to_dict(c, r) for r in c.fetchall()]
 
     def update_user(self, user_id: str, **fields):
         allowed = {"name", "preferred_name", "rapport_level", "communication_style", "onboarding_complete", "last_active"}

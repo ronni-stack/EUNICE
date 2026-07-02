@@ -1307,6 +1307,174 @@ async def admin_secrets_audit(request: Request, token: str = Depends(verify_toke
     return audit_secrets()
 
 
+# --- Admin Dashboard (Week 9) ---
+@app.get("/admin/orgs")
+async def admin_list_orgs(request: Request, token: str = Depends(verify_token)):
+    """List all organizations."""
+    caller_id = await _resolve_user_id(request)
+    _require_permission(caller_id, "admin:*")
+    return {"organizations": memory.sqlite.list_organizations()}
+
+
+@app.post("/admin/orgs")
+async def admin_create_org(request: Request, token: str = Depends(verify_token)):
+    """Create a new organization."""
+    caller_id = await _resolve_user_id(request)
+    _require_permission(caller_id, "admin:*")
+    body = await request.json()
+    org_id = sanitize_text(body.get("org_id", "").strip(), max_length=64)
+    name = sanitize_text(body.get("name", "").strip(), max_length=128)
+    if not org_id or not name:
+        raise HTTPException(status_code=400, detail="org_id and name are required")
+    memory.sqlite.create_organization(org_id, name)
+    audit_logger.log_memory_access(
+        "create", caller_id, org_id, f"organization:{org_id}", {"name": name}
+    )
+    return {"org_id": org_id, "name": name}
+
+
+@app.get("/admin/orgs/{org_id}/departments")
+async def admin_list_departments(org_id: str, request: Request, token: str = Depends(verify_token)):
+    """List departments in an organization."""
+    caller_id = await _resolve_user_id(request)
+    _require_permission(caller_id, "admin:*")
+    return {"org_id": org_id, "departments": memory.sqlite.list_departments(org_id)}
+
+
+@app.post("/admin/orgs/{org_id}/departments")
+async def admin_create_department(org_id: str, request: Request, token: str = Depends(verify_token)):
+    """Create a department within an organization."""
+    caller_id = await _resolve_user_id(request)
+    _require_permission(caller_id, "admin:*")
+    body = await request.json()
+    dept_id = sanitize_text(body.get("dept_id", "").strip(), max_length=64)
+    name = sanitize_text(body.get("name", "").strip(), max_length=128)
+    if not dept_id or not name:
+        raise HTTPException(status_code=400, detail="dept_id and name are required")
+    memory.sqlite.create_department(dept_id, org_id, name)
+    audit_logger.log_memory_access(
+        "create", caller_id, org_id, f"department:{dept_id}", {"name": name}
+    )
+    return {"dept_id": dept_id, "org_id": org_id, "name": name}
+
+
+@app.get("/admin/users")
+async def admin_list_users(request: Request, org_id: str = None, token: str = Depends(verify_token)):
+    """List users, optionally filtered by org."""
+    caller_id = await _resolve_user_id(request)
+    _require_permission(caller_id, "admin:*")
+    return {"users": memory.sqlite.list_users(org_id)}
+
+
+@app.post("/admin/users")
+async def admin_create_user(request: Request, token: str = Depends(verify_token)):
+    """Create or ensure a user record with org/department/role assignment."""
+    caller_id = await _resolve_user_id(request)
+    _require_permission(caller_id, "admin:*")
+    body = await request.json()
+    user_id = sanitize_text(body.get("user_id", "").strip(), max_length=128)
+    name = sanitize_text(body.get("name", "").strip(), max_length=128) or user_id
+    org_id = sanitize_text(body.get("org_id", "default").strip(), max_length=64)
+    dept_id = sanitize_text(body.get("department_id", "default").strip(), max_length=64)
+    role_id = sanitize_text(body.get("role_id", "user").strip(), max_length=64)
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id is required")
+    memory.sqlite.create_organization(org_id, org_id)
+    memory.sqlite.create_department(dept_id, org_id, dept_id)
+    memory.sqlite.ensure_user(user_id, name=name, org_id=org_id, department_id=dept_id, role_id=role_id)
+    audit_logger.log_memory_access(
+        "create", caller_id, org_id, f"user:{user_id}",
+        {"name": name, "department_id": dept_id, "role_id": role_id}
+    )
+    return {"user_id": user_id, "org_id": org_id, "department_id": dept_id, "role_id": role_id}
+
+
+@app.patch("/admin/users/{user_id}")
+async def admin_update_user(user_id: str, request: Request, token: str = Depends(verify_token)):
+    """Update a user's org/department/role assignment."""
+    caller_id = await _resolve_user_id(request)
+    _require_permission(caller_id, "admin:*")
+    body = await request.json()
+    updates = {}
+    for key in ("org_id", "department_id", "role_id"):
+        if key in body:
+            updates[key] = sanitize_text(body[key].strip(), max_length=64)
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    memory.sqlite.assign_user_role(user_id, **updates)
+    audit_logger.log_memory_access(
+        "update", caller_id, updates.get("org_id"), f"user:{user_id}", updates
+    )
+    return {"user_id": user_id, **updates}
+
+
+@app.get("/admin/tools/approvals")
+async def admin_list_tool_approvals(request: Request, org_id: str, token: str = Depends(verify_token)):
+    """List tool approval status for an org."""
+    caller_id = await _resolve_user_id(request)
+    _require_permission(caller_id, "admin:*")
+    explicit = {a["tool_name"]: bool(a["approved"]) for a in memory.sqlite.list_tool_approvals(org_id)}
+    available = tools.get_available_tools()
+    result = []
+    for t in available:
+        name = t["name"]
+        result.append({
+            "tool_name": name,
+            "risk": t["risk"],
+            "approved": explicit.get(name, True),
+            "explicit": name in explicit,
+        })
+    return {"org_id": org_id, "tools": result}
+
+
+@app.post("/admin/tools/approvals")
+async def admin_set_tool_approval(request: Request, token: str = Depends(verify_token)):
+    """Enable or disable a tool for an organization."""
+    caller_id = await _resolve_user_id(request)
+    _require_permission(caller_id, "admin:*")
+    body = await request.json()
+    org_id = sanitize_text(body.get("org_id", "").strip(), max_length=64)
+    tool_name = sanitize_text(body.get("tool_name", "").strip(), max_length=64)
+    approved = bool(body.get("approved", True))
+    if not org_id or not tool_name:
+        raise HTTPException(status_code=400, detail="org_id and tool_name are required")
+    memory.sqlite.set_tool_approval(org_id, tool_name, approved)
+    audit_logger.log_memory_access(
+        "update", caller_id, org_id, f"tool_approval:{tool_name}", {"approved": approved}
+    )
+    return {"org_id": org_id, "tool_name": tool_name, "approved": approved}
+
+
+@app.get("/admin/models/status")
+async def admin_models_status(request: Request, token: str = Depends(verify_token)):
+    """Show approved-model status: available on Ollama, fallback, or missing."""
+    caller_id = await _resolve_user_id(request)
+    _require_permission(caller_id, "admin:*")
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{OLLAMA_URL}/api/tags")
+        available = {m["name"] for m in r.json().get("models", [])} if r.status_code == 200 else set()
+    except Exception:
+        available = set()
+
+    from config import APPROVED_MODELS, MODEL_NAME
+    models = []
+    for name, meta in APPROVED_MODELS.items():
+        status = "active" if name == MODEL_NAME else ("available" if name in available else "missing")
+        models.append({
+            "name": name,
+            "status": status,
+            "active": name == MODEL_NAME,
+            "available": name in available,
+            "metadata": meta,
+        })
+    return {
+        "active_model": MODEL_NAME,
+        "ollama_url": OLLAMA_URL,
+        "models": models,
+    }
+
+
 @app.get("/trails")
 async def list_trails(request: Request, token: str = Depends(verify_token)):
     user_id = await _resolve_user_id(request)
@@ -1636,6 +1804,7 @@ async def read_audit(
     request: Request,
     event_type: str = None,
     user_id: str = None,
+    org_id: str = None,
     since: str = None,
     limit: int = 100,
     offset: int = 0,
@@ -1647,6 +1816,7 @@ async def read_audit(
     entries = audit_logger.read(
         event_type=event_type,
         user_id=user_id,
+        org_id=org_id,
         since=since,
         limit=limit,
         offset=offset,

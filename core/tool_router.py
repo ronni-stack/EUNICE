@@ -43,6 +43,13 @@ class ToolRouter:
     def _get_org_id(self, user_id: str) -> str:
         return self.sqlite_store.get_user_org(user_id) or "default"
 
+    def _is_tool_approved(self, tool_name: str, user_id: str) -> bool:
+        """Return False if the tool has been explicitly disabled for the user's org."""
+        org_id = self._get_org_id(user_id)
+        approved = self.sqlite_store.get_tool_approval(org_id, tool_name)
+        # No record means default-approved for backwards compatibility.
+        return approved is None or approved is True
+
     def get_available_tools(self) -> list:
         """Scan tools/ directory and return tool metadata with risk tiers and descriptions."""
         tools = []
@@ -82,6 +89,12 @@ class ToolRouter:
                 msg = f"[DENIED: you do not have permission to use '{tool_name}']"
                 self._log_audit(tool_name, risk, params, msg, status="denied")
                 return msg
+
+        # Tool approval toggle (Week 9 Enterprise)
+        if user_id and not self._is_tool_approved(tool_name, user_id):
+            msg = f"[DENIED: `{tool_name}` is not approved for your organization]"
+            self._log_audit(tool_name, risk, params, msg, status="denied")
+            return msg
 
         # CRITICAL: Always deny
         if risk == "critical":

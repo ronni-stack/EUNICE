@@ -249,7 +249,8 @@ class AuditLogger:
         self._write(entry)
 
     def read(self, limit: int = 100, offset: int = 0, since: Optional[str] = None,
-             event_type: Optional[str] = None, user_id: Optional[str] = None) -> list:
+             event_type: Optional[str] = None, user_id: Optional[str] = None,
+             org_id: Optional[str] = None) -> list:
         """Read audit entries. Does not modify the log."""
         entries = []
         if not self.log_path.exists():
@@ -270,6 +271,8 @@ class AuditLogger:
                     if event_type and entry.get("event_type") != event_type:
                         continue
                     if user_id and entry.get("actor") != user_id:
+                        continue
+                    if org_id and entry.get("org_id") != org_id:
                         continue
                     entries.append(entry)
 
