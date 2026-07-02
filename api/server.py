@@ -20,6 +20,7 @@ from config import BASE_DIR, DATA_DIR, VERSION, MODEL_NAME, MEMORY_LIMIT, OLLAMA
 from core.auth import verify_token, get_current_user, get_auth_context, AuthContext
 from core.rbac import has_permission, get_user_permissions
 from core.audit import get_audit_logger
+from core.oidc import OIDCManager, OIDCError
 from core.identity import IdentityManager
 from core.personality import load_personality, save_personality
 from core.inference import stream_chat, generate_non_stream
@@ -71,6 +72,7 @@ research = ResearchAssistant(memory)
 react_agent = ReActAgent(memory=memory, tools=tools, research=research)
 identity_manager = IdentityManager()
 audit_logger = get_audit_logger()
+oidc_manager = OIDCManager(store=memory.sqlite, identity_manager=identity_manager, audit=audit_logger)
 logger = logging.getLogger("eunice.api")
 
 # Start background daemon on startup
@@ -495,6 +497,68 @@ async def identity_me(auth: AuthContext = Depends(get_auth_context)):
 @app.get("/devices")
 async def list_devices(auth: AuthContext = Depends(get_auth_context)):
     return {"devices": identity_manager.list_devices(auth.identity_id)}
+
+
+# --- OIDC SSO (Enterprise Week 5) ---
+@app.get("/auth/oidc/providers")
+async def list_oidc_providers(org_id: str = "default"):
+    """List enabled OIDC providers for an organization."""
+    return {"providers": oidc_manager.list_providers(org_id)}
+
+
+@app.get("/auth/oidc/{provider_id}/login")
+async def oidc_login(provider_id: str, redirect_uri: str = None):
+    """Start an OIDC login flow and return the authorization URL."""
+    try:
+        result = oidc_manager.generate_login_url(provider_id, redirect_uri)
+        return result
+    except OIDCError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/auth/oidc/{provider_id}/callback")
+async def oidc_callback(provider_id: str, code: str = "", state: str = "", redirect_uri: str = None):
+    """Handle OIDC provider callback and issue a EUNICE session token."""
+    try:
+        result = await oidc_manager.handle_callback(provider_id, code, state, redirect_uri)
+        return result
+    except OIDCError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/auth/oidc/providers")
+async def create_oidc_provider(request: Request, token: str = Depends(verify_token)):
+    """Create an OIDC provider configuration (admin only)."""
+    user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "admin:*")
+    body = await request.json()
+    try:
+        oidc_manager.create_provider(
+            admin_user_id=user_id,
+            provider_id=body["provider_id"],
+            org_id=body.get("org_id", "default"),
+            name=body["name"],
+            issuer=body["issuer"],
+            client_id=body["client_id"],
+            client_secret=body["client_secret"],
+            redirect_uri=body["redirect_uri"],
+            scopes=body.get("scopes"),
+            claim_mappings=body.get("claim_mappings"),
+            role_mapping=body.get("role_mapping"),
+            enabled=body.get("enabled", True),
+        )
+        return {"status": "created"}
+    except OIDCError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/auth/oidc/providers/{provider_id}")
+async def delete_oidc_provider(provider_id: str, request: Request, token: str = Depends(verify_token)):
+    """Disable an OIDC provider configuration (admin only)."""
+    user_id = await _resolve_user_id(request)
+    _require_permission(user_id, "admin:*")
+    oidc_manager.delete_provider(user_id, provider_id)
+    return {"status": "deleted"}
 
 
 # --- Onboarding Helper ---

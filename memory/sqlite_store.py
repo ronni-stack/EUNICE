@@ -6,7 +6,7 @@
 """EUNICE v0.9 — SQLite Episodic Memory (multi-user + identity)"""
 import sqlite3
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from config import DB_PATH
 
@@ -330,6 +330,46 @@ class SQLiteStore:
                 )
             """)
 
+            # --- OIDC providers & links (v0.10 Enterprise Week 5) ---
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS oidc_providers (
+                    id TEXT PRIMARY KEY,
+                    org_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    issuer TEXT NOT NULL,
+                    client_id TEXT NOT NULL,
+                    client_secret TEXT NOT NULL,
+                    redirect_uri TEXT NOT NULL,
+                    scopes TEXT NOT NULL,  -- JSON list
+                    claim_mappings TEXT NOT NULL,  -- JSON dict
+                    role_mapping TEXT NOT NULL,  -- JSON dict
+                    enabled BOOLEAN DEFAULT 1,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS identity_oidc_links (
+                    provider_id TEXT NOT NULL,
+                    subject TEXT NOT NULL,
+                    identity_id TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (provider_id, subject),
+                    FOREIGN KEY (provider_id) REFERENCES oidc_providers(id) ON DELETE CASCADE,
+                    FOREIGN KEY (identity_id) REFERENCES identities(id) ON DELETE CASCADE
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS oidc_states (
+                    state TEXT PRIMARY KEY,
+                    provider_id TEXT NOT NULL,
+                    nonce TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (provider_id) REFERENCES oidc_providers(id) ON DELETE CASCADE
+                )
+            """)
+
             # --- Reasoning runs & steps (v0.10) ---
             c.execute("""
                 CREATE TABLE IF NOT EXISTS reasoning_runs (
@@ -382,13 +422,14 @@ class SQLiteStore:
 
     # --- Identities & Devices (v0.9) ---
     def create_identity(self, identity_id: str, display_name: str, passphrase_hash: str,
-                        is_admin: bool = False, created_at: str = None, updated_at: str = None):
+                        email: str = None, is_admin: bool = False, created_at: str = None,
+                        updated_at: str = None):
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
             c.execute("""
-                INSERT INTO identities (id, display_name, passphrase_hash, is_admin, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (identity_id, display_name, passphrase_hash, int(is_admin), created_at, updated_at))
+                INSERT INTO identities (id, display_name, email, passphrase_hash, is_admin, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (identity_id, display_name, email, passphrase_hash, int(is_admin), created_at, updated_at))
             conn.commit()
 
     def get_identity(self, identity_id: str) -> Optional[dict]:
@@ -465,6 +506,96 @@ class SQLiteStore:
             c.execute("SELECT revoked FROM identity_tokens WHERE jti = ?", (jti,))
             row = c.fetchone()
             return row is None or bool(row[0])
+
+    # --- OIDC providers ---
+    def create_oidc_provider(self, provider_id: str, org_id: str, name: str, issuer: str,
+                             client_id: str, client_secret: str, redirect_uri: str,
+                             scopes: list = None, claim_mappings: dict = None,
+                             role_mapping: dict = None, enabled: bool = True):
+        scopes = scopes or ["openid", "email", "profile"]
+        claim_mappings = claim_mappings or {"email": "email", "name": "name", "groups": "groups"}
+        role_mapping = role_mapping or {}
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO oidc_providers
+                (id, org_id, name, issuer, client_id, client_secret, redirect_uri,
+                 scopes, claim_mappings, role_mapping, enabled, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (provider_id, org_id, name, issuer, client_id, client_secret, redirect_uri,
+                  json.dumps(scopes), json.dumps(claim_mappings), json.dumps(role_mapping),
+                  int(enabled), datetime.now(timezone.utc).isoformat()))
+            conn.commit()
+
+    def get_oidc_provider(self, provider_id: str) -> Optional[dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("SELECT * FROM oidc_providers WHERE id = ? AND enabled = 1", (provider_id,))
+            row = c.fetchone()
+            return self._row_to_dict(c, row) if row else None
+
+    def list_oidc_providers(self, org_id: str = None) -> list:
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            if org_id:
+                c.execute("SELECT * FROM oidc_providers WHERE org_id = ? AND enabled = 1", (org_id,))
+            else:
+                c.execute("SELECT * FROM oidc_providers WHERE enabled = 1")
+            return [self._row_to_dict(c, r) for r in c.fetchall()]
+
+    def delete_oidc_provider(self, provider_id: str):
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("UPDATE oidc_providers SET enabled = 0 WHERE id = ?", (provider_id,))
+            conn.commit()
+
+    # --- OIDC identity links ---
+    def create_oidc_link(self, provider_id: str, subject: str, identity_id: str):
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("""
+                INSERT OR IGNORE INTO identity_oidc_links (provider_id, subject, identity_id, created_at)
+                VALUES (?, ?, ?, ?)
+            """, (provider_id, subject, identity_id, datetime.now(timezone.utc).isoformat()))
+            conn.commit()
+
+    def get_oidc_link(self, provider_id: str, subject: str) -> Optional[dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("SELECT * FROM identity_oidc_links WHERE provider_id = ? AND subject = ?",
+                      (provider_id, subject))
+            row = c.fetchone()
+            return self._row_to_dict(c, row) if row else None
+
+    # --- OIDC state store ---
+    def create_oidc_state(self, state: str, provider_id: str, nonce: str, expires_at: str):
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("""
+                INSERT INTO oidc_states (state, provider_id, nonce, expires_at, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (state, provider_id, nonce, expires_at, datetime.now(timezone.utc).isoformat()))
+            conn.commit()
+
+    def get_oidc_state(self, state: str) -> Optional[dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("SELECT * FROM oidc_states WHERE state = ?", (state,))
+            row = c.fetchone()
+            return self._row_to_dict(c, row) if row else None
+
+    def delete_oidc_state(self, state: str):
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("DELETE FROM oidc_states WHERE state = ?", (state,))
+            conn.commit()
+
+    def expire_oidc_states(self):
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            c.execute("DELETE FROM oidc_states WHERE expires_at < ?",
+                      (datetime.now(timezone.utc).isoformat(),))
+            conn.commit()
 
     # --- Research cache ---
     def get_research_cache(self, query: str) -> Optional[str]:
